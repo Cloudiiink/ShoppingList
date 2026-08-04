@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { listOrders, changeStatus, deleteOrder } from "@/db/orders";
+import { listOrders, changeStatus, deleteOrder, listAdjustmentGroups } from "@/db/orders";
 import { listBatches } from "@/db/batches";
 import { canonicalProfit, fenToYuan, legalTargets } from "@/db/rules";
 import { isoToLocalDate } from "@/lib/time";
@@ -45,11 +45,23 @@ const ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
   consumed: "自用",
 };
 
-type View = "default" | "all" | "in_progress";
+type View = "default" | "all" | "in_progress" | OrderStatus;
+
+const VIEW_LABEL: [View, string][] = [
+  ["default", "默认视图"],
+  ["in_progress", "进行中"],
+  ["paid_pending_ship", "待发货"],
+  ["shipped", "已发货"],
+  ["done", "完结"],
+  ["refunded", "退款"],
+  ["lost", "丢失"],
+  ["all", "全部"],
+];
 
 export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
+  const [adjGroups, setAdjGroups] = useState<string[]>([]);
   const [view, setView] = useState<View>("default");
   const [batchFilter, setBatchFilter] = useState("");
   const [search, setSearch] = useState("");
@@ -59,13 +71,15 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   const [shipping, setShipping] = useState<OrderRow | null>(null);
 
   const reload = useCallback(async () => {
-    const [os, bs] = await Promise.all([
-      listOrders(db, search.trim() ? { search } : {}),
+    const [os, bs, gs] = await Promise.all([
+      listOrders(db),
       listBatches(db),
+      listAdjustmentGroups(db),
     ]);
     setOrders(os);
     setBatches(bs);
-  }, [db, search]);
+    setAdjGroups(gs);
+  }, [db]);
 
   useEffect(() => {
     reload().catch((e) => setError(e instanceof Error ? e.message : String(e)));
@@ -88,15 +102,26 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
       list = list.filter(
         (o) => IN_PROGRESS.includes(o.status) || o.batch_id === activeBatchId
       );
+    } else if (view !== "all") {
+      // 单状态筛选
+      list = list.filter((o) => o.status === view);
     }
     if (batchFilter === "none") {
       list = list.filter((o) => o.batch_id == null);
     } else if (batchFilter) {
       list = list.filter((o) => o.batch_id === Number(batchFilter));
     }
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((o) =>
+        [o.buyer_wechat, o.buyer_alias, o.product_name, o.order_no]
+          .filter(Boolean)
+          .some((v) => v!.toLowerCase().includes(q))
+      );
+    }
     // 按 id 去重（默认视图并集防御）
     return Array.from(new Map(list.map((o) => [o.id, o])).values());
-  }, [orders, view, batchFilter, activeBatchId]);
+  }, [orders, view, batchFilter, activeBatchId, search]);
 
   const missingShippingCount = useMemo(
     () =>
@@ -141,9 +166,9 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
     <div className="space-y-3 p-4">
       <div className="flex items-center gap-2">
         <Select className="w-40" value={view} onChange={(e) => setView(e.target.value as View)}>
-          <option value="default">默认视图</option>
-          <option value="in_progress">进行中</option>
-          <option value="all">全部</option>
+          {VIEW_LABEL.map(([v, label]) => (
+            <option key={v} value={v}>{label}</option>
+          ))}
         </Select>
         <Select className="w-48" value={batchFilter} onChange={(e) => setBatchFilter(e.target.value)}>
           <option value="">全部批次</option>
@@ -253,6 +278,7 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
         db={db}
         sites={sites}
         batches={batches}
+        adjustmentGroups={adjGroups}
         order={editing}
         open={formOpen}
         onClose={(saved) => {

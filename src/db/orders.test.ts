@@ -9,6 +9,7 @@ import {
   getOrder,
   listOrders,
   nextOrderNo,
+  shipOrder,
 } from "./orders";
 import type { SqlDb } from "./types";
 
@@ -100,6 +101,14 @@ describe("createOrder / validateOrder", () => {
     expect(o.settlement_updated_at).not.toBeNull();
   });
 
+  it("汇率入库前归一化 6 位小数", async () => {
+    const o = await createOrder(db, {
+      ...baseCustomer,
+      exchange_rate: 4.7151234567,
+    });
+    expect(o.exchange_rate).toBe(4.715123);
+  });
+
   it("products upsert：新品建记录，复用累加 use_count", async () => {
     await createOrder(db, baseCustomer);
     await createOrder(db, baseCustomer);
@@ -141,6 +150,39 @@ describe("changeStatus", () => {
     expect(done.closed_at).not.toBeNull();
     const back = await changeStatus(db, o.id, "shipped");
     expect(back.closed_at).toBeNull();
+  });
+});
+
+describe("shipOrder（单事务发货）", () => {
+  it("buy_price 缺失时整体拒绝，不写任何字段", async () => {
+    const o = await createOrder(db, baseCustomer);
+    await expect(
+      shipOrder(db, o.id, { tracking_no: "SF123", shipping_fee: 1000 })
+    ).rejects.toThrow();
+    const after = await getOrder(db, o.id);
+    expect(after.status).toBe("paid_pending_ship");
+    expect(after.tracking_no).toBeNull();
+    expect(after.shipping_fee).toBeNull();
+  });
+
+  it("成功时单号/邮费/状态/shipped_at 一次落库", async () => {
+    const o = await createOrder(db, { ...baseCustomer, buy_price_cny: 5000 });
+    const shipped = await shipOrder(db, o.id, {
+      tracking_no: "SF123",
+      shipping_fee: 1000,
+    });
+    expect(shipped.status).toBe("shipped");
+    expect(shipped.tracking_no).toBe("SF123");
+    expect(shipped.shipping_fee).toBe(1000);
+    expect(shipped.shipped_at).not.toBeNull();
+  });
+
+  it("非 paid_pending_ship 状态拒绝", async () => {
+    const o = await createOrder(db, { ...baseCustomer, buy_price_cny: 5000 });
+    await changeStatus(db, o.id, "lost");
+    await expect(
+      shipOrder(db, o.id, { tracking_no: null, shipping_fee: null })
+    ).rejects.toThrow();
   });
 });
 

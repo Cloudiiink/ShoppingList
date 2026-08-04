@@ -8,7 +8,9 @@ import type {
 import {
   canTransition,
   legalTargets,
+  normRate,
   nowUtc,
+  parseAdjustments,
   requiresBuyPrice,
   statusChangePatch,
 } from "./rules";
@@ -122,7 +124,7 @@ export async function createOrder(
         input.tracking_no ?? null,
         input.cost_foreign_amount ?? null,
         input.cost_currency ?? null,
-        input.exchange_rate ?? null,
+        input.exchange_rate != null ? normRate(input.exchange_rate) : null,
         input.buy_price_cny ?? null,
         input.buy_price_source ?? "estimated",
         input.sell_price_cny ?? null,
@@ -230,7 +232,7 @@ export async function updateOrder(
     buy_price_source: existing.buy_price_source,
     sell_price_cny: existing.sell_price_cny,
     shipping_fee: existing.shipping_fee,
-    adjustments: JSON.parse(existing.adjustments),
+    adjustments: parseAdjustments(existing.adjustments),
     note: existing.note,
     ...patch,
   };
@@ -254,7 +256,7 @@ export async function updateOrder(
     ["tracking_no", merged.tracking_no ?? null],
     ["cost_foreign_amount", merged.cost_foreign_amount ?? null],
     ["cost_currency", merged.cost_currency ?? null],
-    ["exchange_rate", merged.exchange_rate ?? null],
+    ["exchange_rate", merged.exchange_rate != null ? normRate(merged.exchange_rate) : null],
     ["buy_price_cny", merged.buy_price_cny ?? null],
     ["buy_price_source", merged.buy_price_source ?? "estimated"],
     ["sell_price_cny", merged.sell_price_cny ?? null],
@@ -265,9 +267,18 @@ export async function updateOrder(
   ];
   if (settlementTouched) fields.push(["settlement_updated_at", now]);
 
+  await runUpdate(db, id, fields);
+  return getOrder(db, id);
+}
+
+/** 动态 UPDATE 构建（updateOrder / changeStatus 共用） */
+async function runUpdate(
+  db: SqlDb,
+  id: number,
+  fields: [string, unknown][]
+): Promise<void> {
   const sql = `UPDATE orders SET ${fields.map(([f]) => `${f} = ?`).join(", ")} WHERE id = ?`;
   await db.execute(sql, [...fields.map(([, v]) => v), id]);
-  return getOrder(db, id);
 }
 
 /** 状态变更统一入口：转移矩阵前置校验 + 硬校验门槛 + 时间戳兜底四条 */
@@ -287,12 +298,55 @@ export async function changeStatus(
   }
   const now = nowUtc();
   const patch = statusChangePatch(order, to, now);
-  const fields = Object.entries(patch);
-  await db.execute(
-    `UPDATE orders SET ${fields.map(([f]) => `${f} = ?`).join(", ")}, updated_at = ? WHERE id = ?`,
-    [...fields.map(([, v]) => v), now, id]
-  );
+  await runUpdate(db, id, [...Object.entries(patch), ["updated_at", now]]);
   return getOrder(db, id);
+}
+
+/**
+ * 标记发货（单事务）：先校验 buy_price 硬门槛，再同事务写快递单号/邮费 + 转 shipped。
+ * 仅从 paid_pending_ship 发起；lost/refunded 的纠错回退走通用 changeStatus。
+ * 任一失败整体回滚，不留部分写入。
+ */
+export async function shipOrder(
+  db: SqlDb,
+  id: number,
+  shipping: { tracking_no: string | null; shipping_fee: number | null }
+): Promise<OrderRow> {
+  const order = await getOrder(db, id);
+  if (order.status !== "paid_pending_ship") {
+    throw new Error(`当前状态 ${order.status} 不能标记发货`);
+  }
+  if (order.buy_price_cny === null) {
+    throw new Error("发货前必须填写买入价");
+  }
+  const now = nowUtc();
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    const patch = statusChangePatch(order, "shipped", now);
+    await runUpdate(db, id, [
+      ["tracking_no", shipping.tracking_no],
+      ["shipping_fee", shipping.shipping_fee],
+      ...Object.entries(patch),
+      ["updated_at", now],
+    ]);
+    await db.execute("COMMIT");
+  } catch (e) {
+    await db.execute("ROLLBACK");
+    throw e;
+  }
+  return getOrder(db, id);
+}
+
+/** adjustments 分组联想：返回历史出现过的全部分组名 */
+export async function listAdjustmentGroups(db: SqlDb): Promise<string[]> {
+  const rows = await db.select<{ adjustments: string }[]>(
+    "SELECT adjustments FROM orders WHERE adjustments <> '[]'"
+  );
+  const groups = new Set<string>();
+  for (const r of rows) {
+    for (const a of parseAdjustments(r.adjustments)) groups.add(a.group);
+  }
+  return [...groups].sort();
 }
 
 export async function deleteOrder(db: SqlDb, id: number): Promise<void> {

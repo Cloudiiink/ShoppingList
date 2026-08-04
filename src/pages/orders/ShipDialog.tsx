@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { yuanToFen } from "@/db/rules";
-import { changeStatus, updateOrder } from "@/db/orders";
+import { shipOrder } from "@/db/orders";
 import type { OrderRow, SqlDb } from "@/db/types";
 
 interface Props {
@@ -39,11 +39,10 @@ export function ShipDialog({ db, order, onClose }: Props) {
     setError("");
     try {
       const fee = shippingFee ? yuanToFen(shippingFee) : null;
-      await updateOrder(db, order!.id, {
+      await shipOrder(db, order!.id, {
         tracking_no: trackingNo.trim() || null,
         shipping_fee: fee,
       });
-      await changeStatus(db, order!.id, "shipped");
       onClose(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

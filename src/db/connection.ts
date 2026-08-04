@@ -35,9 +35,3 @@ export async function initDb(): Promise<Database> {
   db = conn;
   return conn;
 }
-
-/** 已初始化后取用；未初始化抛错（调用方必须先过 initDb） */
-export function getDb(): Database {
-  if (!db) throw new Error("数据库未初始化：请先 await initDb()");
-  return db;
-}

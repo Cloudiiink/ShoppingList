@@ -13,20 +13,21 @@ import {
 } from "@/components/ui/dialog";
 import { fetchRate } from "@/lib/rates";
 import { isoToLocalInput, localInputToIso } from "@/lib/time";
-import { foreignToFen, fenToYuan, yuanToFen, normRate } from "@/db/rules";
+import { foreignToFen, fenToYuan, yuanToFen, normRate, nowUtc, parseAdjustments } from "@/db/rules";
 import type { Adjustment } from "@/db/rules";
 import type {
   BatchRow,
   Currency,
   OrderRow,
+  OrderStatus,
   OrderType,
+  ProductRow,
   SiteRow,
   SqlDb,
 } from "@/db/types";
-import { createOrder, updateOrder, type OrderInput } from "@/db/orders";
+import { createOrder, updateOrder, changeStatus, type OrderInput } from "@/db/orders";
 import { searchProducts } from "@/db/products";
 import { legalTargets } from "@/db/rules";
-import type { OrderStatus } from "@/db/types";
 
 const CURRENCIES: Currency[] = ["AUD", "USD", "HKD"];
 
@@ -34,6 +35,8 @@ interface Props {
   db: SqlDb;
   sites: SiteRow[];
   batches: BatchRow[];
+  /** adjustments 分组联想（历史值） */
+  adjustmentGroups: string[];
   /** 传入 = 编辑；null = 新建 */
   order: OrderRow | null;
   open: boolean;
@@ -71,7 +74,7 @@ function initFrom(order: OrderRow | null): FormState {
     product_note: order?.product_note ?? "",
     site_id: order ? String(order.site_id) : "",
     batch_id: order?.batch_id != null ? String(order.batch_id) : "",
-    ordered_at: isoToLocalInput(order?.ordered_at ?? new Date().toISOString()),
+    ordered_at: isoToLocalInput(order?.ordered_at ?? nowUtc()),
     cost_foreign: order?.cost_foreign_amount != null ? fenToYuan(order.cost_foreign_amount) : "",
     cost_currency: order?.cost_currency ?? "AUD",
     exchange_rate: order?.exchange_rate != null ? String(order.exchange_rate) : "",
@@ -79,16 +82,16 @@ function initFrom(order: OrderRow | null): FormState {
     buy_price_source: order?.buy_price_source ?? "estimated",
     sell_price: order?.sell_price_cny != null ? fenToYuan(order.sell_price_cny) : "",
     shipping_fee: order?.shipping_fee != null ? fenToYuan(order.shipping_fee) : "",
-    adjustments: order ? JSON.parse(order.adjustments) : [],
+    adjustments: order ? parseAdjustments(order.adjustments) : [],
     note: order?.note ?? "",
   };
 }
 
-export function OrderForm({ db, sites, batches, order, open, onClose }: Props) {
+export function OrderForm({ db, sites, batches, adjustmentGroups, order, open, onClose }: Props) {
   const [f, setF] = useState<FormState>(() => initFrom(order));
   const [error, setError] = useState("");
   const [rateLoading, setRateLoading] = useState(false);
-  const [suggestions, setSuggestions] = useState<{ name: string; default_site_id: number | null; last_cost: number | null }[]>([]);
+  const [suggestions, setSuggestions] = useState<ProductRow[]>([]);
   const [targetStatus, setTargetStatus] = useState<string>("");
 
   useEffect(() => {
@@ -130,7 +133,7 @@ export function OrderForm({ db, sites, batches, order, open, onClose }: Props) {
     }
   }
 
-  function pickSuggestion(p: { name: string; default_site_id: number | null; last_cost: number | null }) {
+  function pickSuggestion(p: ProductRow) {
     setF((prev) => ({
       ...prev,
       product_name: p.name,
@@ -177,7 +180,7 @@ export function OrderForm({ db, sites, batches, order, open, onClose }: Props) {
         buyer_alias: f.buyer_alias.trim() || null,
         region: f.region.trim() || null,
         product_note: f.product_note.trim() || null,
-        ordered_at: localInputToIso(f.ordered_at) ?? new Date().toISOString(),
+        ordered_at: localInputToIso(f.ordered_at) ?? nowUtc(),
         cost_foreign_amount: f.cost_foreign ? yuanToFen(f.cost_foreign) : null,
         cost_currency: f.cost_foreign ? (f.cost_currency as Currency) : null,
         exchange_rate: f.exchange_rate ? normRate(Number(f.exchange_rate)) : null,
@@ -191,7 +194,6 @@ export function OrderForm({ db, sites, batches, order, open, onClose }: Props) {
       if (order) {
         await updateOrder(db, order.id, input);
         if (targetStatus) {
-          const { changeStatus } = await import("@/db/orders");
           await changeStatus(db, order.id, targetStatus as OrderStatus);
         }
       } else {
@@ -346,13 +348,18 @@ export function OrderForm({ db, sites, batches, order, open, onClose }: Props) {
               + 添加
             </Button>
           </div>
+          <datalist id="adjustment-groups">
+            {adjustmentGroups.map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
           {f.adjustments.map((a, i) => (
             <div key={i} className="mb-1 flex items-center gap-1">
               <Select className="w-24" value={a.kind} onChange={(e) => setAdjustment(i, { kind: e.target.value as "cost" | "revenue" })}>
                 <option value="cost">成本</option>
                 <option value="revenue">收入</option>
               </Select>
-              <Input placeholder="分组（如 关税）" value={a.group} onChange={(e) => setAdjustment(i, { group: e.target.value })} />
+              <Input placeholder="分组（如 关税）" list="adjustment-groups" value={a.group} onChange={(e) => setAdjustment(i, { group: e.target.value })} />
               <Input
                 className={`w-28 ${a.amount < 0 ? "text-green-600" : ""}`}
                 placeholder="金额（元）"
