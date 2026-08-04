@@ -1,11 +1,11 @@
 import { Button } from "@/components/ui/button";
-import { canonicalProfit, fenToYuan, legalTargets } from "@/db/rules";
+import { canonicalProfit, fenToYuan, legalTargets, IN_PROGRESS_STATUSES } from "@/db/rules";
 import { SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow } from "@/db/types";
 
-const IN_PROGRESS: OrderStatus[] = ["paid_pending_ship", "shipped"];
+const IN_PROGRESS = IN_PROGRESS_STATUSES;
 
 /** §4.5 行变色 */
 const ROW_COLOR: Partial<Record<OrderStatus, string>> = {

@@ -16,6 +16,7 @@ import { listBatches, listMembers } from "@/db/batches";
 import {
   abnormalLedger,
   batchProfitRows,
+  incompleteCount,
   lastNMonths,
   monthlyProfit,
   pendingShipInfo,
@@ -49,14 +50,7 @@ export function StatsPage({ db }: { db: SqlDb }) {
   const monthly = useMemo(() => monthlyProfit(orders), [orders]);
   const currentMonth = utcToLocalMonth(new Date().toISOString());
   const thisMonth = monthly.get(currentMonth) ?? { profit: 0, lost: 0 };
-  const incompleteCount = useMemo(
-    () =>
-      orders.filter((o) => {
-        if (o.status === "refunded" || o.order_type === "stock") return false;
-        return o.buy_price_cny === null;
-      }).length,
-    [orders]
-  );
+  const incomplete = useMemo(() => incompleteCount(orders), [orders]);
   const pending = useMemo(() => pendingShipInfo(orders), [orders]);
   const holding = useMemo(() => stockHolding(orders), [orders]);
   const unsettled = useMemo(() => unsettledBatchCount(batches, membersByBatch), [batches, membersByBatch]);
@@ -91,13 +85,25 @@ export function StatsPage({ db }: { db: SqlDb }) {
     return <div className="p-4 text-sm text-destructive">{error}</div>;
   }
 
+  if (orders.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+        <p>还没有任何订单。</p>
+        <p className="text-sm">到订单页录第一单后，这里的收益卡片、图表和异常账本就有数据了。</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 p-4">
       {/* 卡片 ×4 */}
       <div className="grid grid-cols-4 gap-3">
-        <Card title="本月收益" value={`${fenToYuan(thisMonth.profit + thisMonth.lost)} 元`}>
-          {incompleteCount > 0 && (
-            <p className="text-xs text-orange-600">{incompleteCount} 单未补成本，统计不完整</p>
+        <Card title="本月收益（发货口径）" value={`${fenToYuan(thisMonth.profit)} 元`}>
+          {thisMonth.lost !== 0 && (
+            <p className="text-xs text-red-600">丢失亏损 {fenToYuan(thisMonth.lost)} 元</p>
+          )}
+          {incomplete > 0 && (
+            <p className="text-xs text-orange-600">{incomplete} 单未补成本，统计不完整</p>
           )}
         </Card>
         <Card title="待发货" value={`${pending.count} 单`}>

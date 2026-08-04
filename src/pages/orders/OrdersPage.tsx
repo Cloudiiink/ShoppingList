@@ -8,8 +8,9 @@ import { listBatches } from "@/db/batches";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "./OrderForm";
 import { ShipDialog } from "./ShipDialog";
+import { IN_PROGRESS_STATUSES } from "@/db/rules";
 
-const IN_PROGRESS: OrderStatus[] = ["paid_pending_ship", "shipped"];
+const IN_PROGRESS = IN_PROGRESS_STATUSES;
 
 type View = "default" | "all" | "in_progress" | OrderStatus;
 

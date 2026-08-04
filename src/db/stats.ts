@@ -67,14 +67,19 @@ export function abnormalLedger(orders: OrderRow[], month: string | null): Ledger
       r.refundCount++;
       r.refundTotal += o.sell_price_cny ?? 0;
     } else {
+      // lost 在转移时已硬校验 buy_price，正常不会 incomplete；防御性处理：
+      // 单数永远计入，亏损额在可计算时累加，绝不静默当 0
+      r.lostCount++;
       const p = canonicalProfit(o);
-      if (p.kind === "ok") {
-        r.lostCount++;
-        r.lostTotal += Math.abs(p.value);
-      }
+      if (p.kind === "ok") r.lostTotal += Math.abs(p.value);
     }
   }
   return r;
+}
+
+/** 未补成本单数（聚合提示用）：以 canonicalProfit 三态为唯一判据，页面不得复制分支 */
+export function incompleteCount(orders: OrderRow[]): number {
+  return orders.filter((o) => canonicalProfit(o).kind === "incomplete").length;
 }
 
 /** 待发货卡片：单数 + 最早等待天数 */
