@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { initDb } from "@/db/connection";
 import { listSites } from "@/db/sites";
 import { OrdersPage } from "@/pages/orders/OrdersPage";
 import { BatchesPage } from "@/pages/batches/BatchesPage";
 import { InventoryPage } from "@/pages/inventory/InventoryPage";
+import { SettingsPage } from "@/pages/settings/SettingsPage";
+import { newestBackupAgeDays } from "@/lib/backupFiles";
 import { cn } from "@/lib/utils";
 import type { SiteRow, SqlDb } from "@/db/types";
 
@@ -20,12 +22,13 @@ const PAGE_TICKET: Record<Page, string | null> = {
   团: null,
   库存: null,
   统计: "Ticket #6",
-  设置: "Ticket #7",
+  设置: null,
 };
 
 export default function App() {
   const [state, setState] = useState<BootState>({ kind: "booting" });
   const [page, setPage] = useState<Page>("订单");
+  const [backupReminder, setBackupReminder] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -33,6 +36,12 @@ export default function App() {
         const db = await initDb();
         const sites = await listSites(db);
         setState({ kind: "ready", db, sites });
+        // 7 天未备份 → 非阻塞提示（fs 不可用的环境静默跳过）
+        try {
+          const age = await newestBackupAgeDays();
+          if (age === null) setBackupReminder("还没有任何备份，建议到设置页立即备份");
+          else if (age > 7) setBackupReminder(`已 ${Math.floor(age)} 天未备份`);
+        } catch { /* ignore */ }
       } catch (e) {
         setState({
           kind: "error",
@@ -40,6 +49,10 @@ export default function App() {
         });
       }
     })();
+  }, []);
+
+  const onSitesChanged = useCallback((sites: SiteRow[]) => {
+    setState((s) => (s.kind === "ready" ? { ...s, sites } : s));
   }, []);
 
   if (state.kind === "booting") {
@@ -79,12 +92,20 @@ export default function App() {
         ))}
       </nav>
       <main className="flex-1 overflow-y-auto">
+        {backupReminder && (
+          <div className="flex items-center justify-between bg-orange-50 px-4 py-2 text-sm text-orange-700">
+            <span>{backupReminder}</span>
+            <button onClick={() => setBackupReminder(null)}>知道了</button>
+          </div>
+        )}
         {page === "订单" ? (
           <OrdersPage db={state.db} sites={state.sites} />
         ) : page === "团" ? (
           <BatchesPage db={state.db} sites={state.sites} />
         ) : page === "库存" ? (
           <InventoryPage db={state.db} sites={state.sites} />
+        ) : page === "设置" ? (
+          <SettingsPage db={state.db} onSitesChanged={onSitesChanged} />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
             {page}页将在 {PAGE_TICKET[page]} 实现
