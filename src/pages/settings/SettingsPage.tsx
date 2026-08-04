@@ -92,6 +92,11 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">网站管理</h2>
+        {sites.length === 0 && (
+          <p className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+            还没有网站。先添加常用网站（如 JAYD 澳洲站），录单和开团都需要它。
+          </p>
+        )}
         <table className="w-full text-sm">
           <tbody>
             {sites.map((s) => (

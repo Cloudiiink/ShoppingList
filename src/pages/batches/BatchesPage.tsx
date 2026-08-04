@@ -19,7 +19,7 @@ import {
   previewAllocation,
   updateBatch,
 } from "@/db/batches";
-import { updateOrder } from "@/db/orders";
+import { changeStatus, deleteOrder, updateOrder } from "@/db/orders";
 import {
   canonicalProfit,
   fenToYuan,
@@ -27,10 +27,11 @@ import {
   yuanToFen,
   type SettlementState,
 } from "@/db/rules";
-import { SOURCE_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
-import type { BatchRow, Currency, OrderRow, SiteRow, SqlDb } from "@/db/types";
+import type { BatchRow, Currency, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "@/pages/orders/OrderForm";
+import { OrdersTable } from "@/components/OrdersTable";
+import { ShipDialog } from "@/pages/orders/ShipDialog";
 import { listAdjustmentGroups } from "@/db/orders";
 
 const STATE_LABEL: Record<SettlementState, { text: string; className: string }> = {
@@ -268,6 +269,24 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
     await onChanged();
   }
 
+  const [editing, setEditing] = useState<OrderRow | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [shipping, setShipping] = useState<OrderRow | null>(null);
+
+  async function doStatus(o: OrderRow, to: OrderStatus) {
+    setError("");
+    try {
+      await changeStatus(db, o.id, to);
+      await onChanged();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function doDeleteOrder(o: OrderRow) {
+    if (!window.confirm(`确认删除订单 ${o.order_no}？`)) return;
+    await deleteOrder(db, o.id);
+    await onChanged();
+  }
+
   async function doDeleteBatch() {
     if (!window.confirm(`确认删除团「${batch.name}」？成员单将变为散单。`)) return;
     await deleteBatch(db, batch.id);
@@ -336,38 +355,21 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
         <h3 className="font-medium">成员订单（{members.length}）</h3>
         <Button size="sm" variant="outline" onClick={() => setAddMemberOpen(true)}>+ 加订单</Button>
       </div>
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-left text-muted-foreground">
-            <th className="p-2">订单号</th><th className="p-2">商品</th><th className="p-2">买家</th>
-            <th className="p-2">状态</th><th className="p-2 text-right">外币成本</th>
-            <th className="p-2 text-right">买入价</th><th className="p-2">来源</th>
-            <th className="p-2 text-right">收益</th><th className="p-2"></th>
-          </tr>
-        </thead>
-        <tbody>
-          {members.map((m) => {
-            const p = canonicalProfit(m);
-            return (
-              <tr key={m.id} className="border-b">
-                <td className="p-2 font-mono text-xs">{m.order_no}</td>
-                <td className="p-2">{m.product_name}{m.order_type === "stock" && "（囤）"}</td>
-                <td className="p-2">{m.buyer_alias || m.buyer_wechat || ""}</td>
-                <td className="p-2">{m.status}</td>
-                <td className="p-2 text-right">{m.cost_foreign_amount != null ? `${fenToYuan(m.cost_foreign_amount)} ${m.cost_currency}` : "—"}</td>
-                <td className="p-2 text-right">{m.buy_price_cny != null ? fenToYuan(m.buy_price_cny) : "—"}</td>
-                <td className="p-2 text-xs text-muted-foreground">
-                  {SOURCE_LABEL[m.buy_price_source]}
-                </td>
-                <td className="p-2 text-right">{p.kind === "ok" ? fenToYuan(p.value) : p.kind === "incomplete" ? "—" : ""}</td>
-                <td className="p-2">
-                  <Button size="sm" variant="ghost" onClick={() => removeMember(m)}>移出</Button>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <OrdersTable
+        orders={members}
+        sites={sites}
+        batches={batches}
+        hideBatch
+        showForeign
+        onEdit={(o) => { setEditing(o); setEditOpen(true); }}
+        onShip={(o) => setShipping(o)}
+        onStatus={doStatus}
+        onDelete={doDeleteOrder}
+        extraAction={(m) => (
+          <Button size="sm" variant="ghost" onClick={() => removeMember(m)}>移出</Button>
+        )}
+        emptyText="暂无成员订单"
+      />
 
       <AllocateDialog db={db} batch={batch} members={members} open={allocOpen} onClose={(done) => { setAllocOpen(false); if (done) onChanged(); }} />
       <OrderForm
@@ -379,6 +381,20 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
         open={addMemberOpen}
         presetBatch={batch}
         onClose={(saved) => { setAddMemberOpen(false); if (saved) onChanged(); }}
+      />
+      <OrderForm
+        db={db}
+        sites={sites}
+        batches={batches}
+        adjustmentGroups={adjGroups}
+        order={editing}
+        open={editOpen}
+        onClose={(saved) => { setEditOpen(false); setEditing(null); if (saved) onChanged(); }}
+      />
+      <ShipDialog
+        db={db}
+        order={shipping}
+        onClose={(saved) => { setShipping(null); if (saved) onChanged(); }}
       />
     </div>
   );
