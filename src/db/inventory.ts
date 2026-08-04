@@ -1,14 +1,11 @@
 import type { OrderRow, SqlDb } from "./types";
 import { getOrder } from "./orders";
 import { assertBatchMembership } from "./batches";
-import { nowUtc } from "./rules";
-
-/** 转售出合法来源（§6.3）：lost 需先按矩阵回退 in_stock */
-const CONVERTIBLE = ["in_stock", "listed", "consumed"];
+import { canConvertStock, nowUtc } from "./rules";
 
 export interface ConvertInput {
   buyer_wechat: string;
-  sell_price_cny: number;
+  sell_price_cny: number | null;
   buyer_alias?: string | null;
   region?: string | null;
   batch_id?: number | null;
@@ -17,7 +14,7 @@ export interface ConvertInput {
 /**
  * 转售出（单事务）：清 closed_at（consumed 时有值）→
  * order_type→customer、status→paid_pending_ship、写 converted_from_stock_at。
- * 成本与购买日锁定不变。
+ * 成本与购买日锁定不变。合法来源规则见 rules.ts canConvertStock。
  */
 export async function convertStockToCustomer(
   db: SqlDb,
@@ -28,11 +25,12 @@ export async function convertStockToCustomer(
   if (order.order_type !== "stock") {
     throw new Error("只有囤货单可以转售出");
   }
-  if (!CONVERTIBLE.includes(order.status)) {
+  if (!canConvertStock(order.status)) {
     throw new Error(`lost 状态的囤货不能直接转售出，请先回退到在库`);
   }
   if (!input.buyer_wechat.trim()) throw new Error("转售出必须填写买家微信");
   if (input.sell_price_cny == null) throw new Error("转售出必须填写卖出价");
+  const sellPrice = input.sell_price_cny;
 
   const now = nowUtc();
   await db.execute("BEGIN IMMEDIATE");
@@ -53,7 +51,7 @@ export async function convertStockToCustomer(
        WHERE id = ?`,
       [
         input.buyer_wechat.trim(),
-        input.sell_price_cny,
+        sellPrice,
         input.buyer_alias ?? null,
         input.region ?? null,
         input.batch_id ?? order.batch_id,

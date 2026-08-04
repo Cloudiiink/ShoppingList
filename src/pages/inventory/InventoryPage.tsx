@@ -13,7 +13,8 @@ import {
 import { listOrders, changeStatus } from "@/db/orders";
 import { listBatches } from "@/db/batches";
 import { convertStockToCustomer } from "@/db/inventory";
-import { fenToYuan, legalTargets, yuanToFen } from "@/db/rules";
+import { canConvertStock, fenToYuan, legalTargets, yuanToFen } from "@/db/rules";
+import { STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
@@ -22,13 +23,6 @@ const ROW_COLOR: Partial<Record<OrderStatus, string>> = {
   in_stock: "bg-purple-100",
   listed: "bg-purple-50",
   lost: "bg-red-200",
-};
-
-const STATUS_LABEL: Record<string, string> = {
-  in_stock: "在库",
-  listed: "挂单中",
-  consumed: "自用",
-  lost: "丢失",
 };
 
 const ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
@@ -98,7 +92,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
         <tbody>
           {orders.map((o) => {
             const targets = legalTargets("stock", o.status);
-            const convertible = o.status !== "lost";
+            const convertible = canConvertStock(o.status);
             return (
               <tr key={o.id} className={cn("border-b", ROW_COLOR[o.status])}>
                 <td className="p-2 font-mono text-xs">{o.order_no}</td>
@@ -157,7 +151,7 @@ function ConvertDialog({ db, batches, order, onClose }: { db: SqlDb; batches: Ba
     try {
       await convertStockToCustomer(db, order!.id, {
         buyer_wechat: wechat,
-        sell_price_cny: sellPrice ? yuanToFen(sellPrice) : (null as unknown as number),
+        sell_price_cny: sellPrice ? yuanToFen(sellPrice) : null,
         buyer_alias: alias.trim() || null,
         region: region.trim() || null,
         batch_id: batchId ? Number(batchId) : null,

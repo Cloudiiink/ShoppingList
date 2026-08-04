@@ -16,17 +16,18 @@ import {
   deleteBatch,
   listBatches,
   listMembers,
+  previewAllocation,
   updateBatch,
 } from "@/db/batches";
 import { updateOrder } from "@/db/orders";
 import {
   canonicalProfit,
   fenToYuan,
-  foreignToFen,
   settlementState,
   yuanToFen,
   type SettlementState,
 } from "@/db/rules";
+import { SOURCE_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { BatchRow, Currency, OrderRow, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "@/pages/orders/OrderForm";
@@ -356,7 +357,7 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
                 <td className="p-2 text-right">{m.cost_foreign_amount != null ? `${fenToYuan(m.cost_foreign_amount)} ${m.cost_currency}` : "—"}</td>
                 <td className="p-2 text-right">{m.buy_price_cny != null ? fenToYuan(m.buy_price_cny) : "—"}</td>
                 <td className="p-2 text-xs text-muted-foreground">
-                  {{ estimated: "预估", manual: "手动", batch_allocated: "分摊" }[m.buy_price_source]}
+                  {SOURCE_LABEL[m.buy_price_source]}
                 </td>
                 <td className="p-2 text-right">{p.kind === "ok" ? fenToYuan(p.value) : p.kind === "incomplete" ? "—" : ""}</td>
                 <td className="p-2">
@@ -396,26 +397,11 @@ function AllocateDialog({ db, batch, members, open, onClose }: { db: SqlDb; batc
     setMode(batch.checkout_foreign_amount != null ? "checkout" : "manual");
   }, [open, batch]);
 
-  // 预览：T/F/P 构成逐行列出（§5.3 防呆哲学：展示而非硬约束）
+  // 预览：T/F/P 构成逐行列出（与 allocateBatch 共用 computeTarget，防漂移）
   useEffect(() => {
     if (!open) return;
-    try {
-      const locked = members.filter((m) => m.buy_price_source === "manual");
-      const F = locked.reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
-      let T: number | null = null;
-      if (mode === "checkout") {
-        if (batch.checkout_foreign_amount != null && batch.exchange_rate != null) {
-          T = foreignToFen(batch.checkout_foreign_amount, batch.exchange_rate);
-        }
-      } else if (manualRate) {
-        const totalForeign = members.reduce((s, m) => s + (m.cost_foreign_amount ?? 0), 0);
-        T = foreignToFen(totalForeign, Number(manualRate));
-      }
-      if (T == null) { setPreview(null); return; }
-      const P = T - F;
-      const eligible = members.filter((m) => m.buy_price_source !== "manual");
-      setPreview({ T, F, P, locked, zeros: P === 0 ? eligible.length : 0 });
-    } catch { setPreview(null); }
+    const mode_ = mode === "checkout" ? { mode } as const : { mode, rate: Number(manualRate) } as const;
+    setPreview(previewAllocation(batch, members, mode_));
   }, [open, mode, manualRate, batch, members]);
 
   async function run() {

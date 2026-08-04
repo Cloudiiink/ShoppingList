@@ -50,8 +50,15 @@ export async function updateBatch(
 }
 
 export async function deleteBatch(db: SqlDb, id: number): Promise<void> {
-  await db.execute("UPDATE orders SET batch_id = NULL WHERE batch_id = ?", [id]);
-  await db.execute("DELETE FROM batches WHERE id = ?", [id]);
+  await db.execute("BEGIN IMMEDIATE");
+  try {
+    await db.execute("UPDATE orders SET batch_id = NULL WHERE batch_id = ?", [id]);
+    await db.execute("DELETE FROM batches WHERE id = ?", [id]);
+    await db.execute("COMMIT");
+  } catch (e) {
+    await db.execute("ROLLBACK");
+    throw e;
+  }
 }
 
 export async function listMembers(db: SqlDb, batchId: number): Promise<OrderRow[]> {
@@ -86,10 +93,63 @@ export type AllocateMode =
   | { mode: "checkout" }
   | { mode: "manual"; rate: number };
 
+/** 计算目标总额 T（两模式统一入口，预览与执行共用，防漂移） */
+export function computeTarget(
+  batch: Pick<BatchRow, "checkout_foreign_amount" | "exchange_rate">,
+  members: Pick<OrderRow, "cost_foreign_amount">[],
+  mode: AllocateMode
+): { T: number; rate: number } {
+  if (mode.mode === "checkout") {
+    if (batch.checkout_foreign_amount == null || batch.exchange_rate == null) {
+      throw new Error("按结账结算需要填写实付总额与团汇率");
+    }
+    return {
+      T: foreignToFen(batch.checkout_foreign_amount, batch.exchange_rate),
+      rate: normRate(batch.exchange_rate),
+    };
+  }
+  if (mode.rate == null) throw new Error("手动汇率模式需要输入汇率");
+  const totalForeign = members.reduce((s, m) => s + (m.cost_foreign_amount ?? 0), 0);
+  if (totalForeign <= 0) throw new Error("团内无外币成员，无法分摊");
+  return { T: foreignToFen(totalForeign, mode.rate), rate: normRate(mode.rate) };
+}
+
+/** 分摊预览（T/F/P 构成，弹窗展示用） */
+export function previewAllocation(
+  batch: Pick<BatchRow, "checkout_foreign_amount" | "exchange_rate">,
+  members: OrderRow[],
+  mode: AllocateMode
+): { T: number; F: number; P: number; locked: OrderRow[]; zeros: number } | null {
+  try {
+    const { T } = computeTarget(batch, members, mode);
+    const locked = members.filter((m) => m.buy_price_source === "manual");
+    const F = locked.reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
+    const P = T - F;
+    const eligible = members.filter((m) => m.buy_price_source !== "manual");
+    return { T, F, P, locked, zeros: P === 0 ? eligible.length : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** 等效汇率 = checkout × 团汇率 ÷ Σ成员外币成本（纯展示，整数精确计算） */
+function computeEffectiveRate(
+  checkoutForeign: number | null,
+  rate: number | null,
+  members: Pick<OrderRow, "cost_foreign_amount">[]
+): number | null {
+  const totalForeign = members.reduce((s, m) => s + (m.cost_foreign_amount ?? 0), 0);
+  if (checkoutForeign == null || rate == null || totalForeign <= 0) return null;
+  const numerator =
+    BigInt(checkoutForeign) * BigInt(Math.round(normRate(rate) * 1e6));
+  return Number(numerator / BigInt(totalForeign)) / 1e6;
+}
+
 /**
  * 结算分摊（§5.3，单事务）：
  * T = checkout×团汇率（checkout 模式）或 Σ外币成本×输入汇率（手动模式，只取整一次）
- * → allocate() 分摊 → Σ≡T 校验 → 写 allocated_* 五字段。手动模式 allocated_checkout 存 NULL。
+ * → allocate() 分摊 → Σ≡T 校验 → 写 allocated_* 五字段。
+ * 手动模式：allocated_checkout 存 NULL，且输入汇率回写 batches.exchange_rate（四态锚点）。
  */
 export async function allocateBatch(
   db: SqlDb,
@@ -101,26 +161,8 @@ export async function allocateBatch(
 
   if (members.length === 0) throw new Error("团内无订单，无法分摊");
 
-  let T: number;
-  let allocatedRate: number;
-  let allocatedCheckout: number | null;
-
-  if (mode.mode === "checkout") {
-    if (batch.checkout_foreign_amount == null || batch.exchange_rate == null) {
-      throw new Error("按结账结算需要填写实付总额与团汇率");
-    }
-    allocatedRate = normRate(batch.exchange_rate);
-    allocatedCheckout = batch.checkout_foreign_amount;
-    T = foreignToFen(batch.checkout_foreign_amount, batch.exchange_rate);
-  } else {
-    if (mode.rate == null) throw new Error("手动汇率模式需要输入汇率");
-    allocatedRate = normRate(mode.rate);
-    allocatedCheckout = null;
-    const totalForeign = members.reduce((s, m) => s + (m.cost_foreign_amount ?? 0), 0);
-    if (totalForeign <= 0) throw new Error("团内无外币成员，无法分摊");
-    T = foreignToFen(totalForeign, mode.rate);
-  }
-
+  const { T, rate: allocatedRate } = computeTarget(batch, members, mode);
+  const allocatedCheckout = mode.mode === "checkout" ? batch.checkout_foreign_amount : null;
   const results = allocate(members, T);
 
   await db.execute("BEGIN IMMEDIATE");
@@ -139,23 +181,13 @@ export async function allocateBatch(
     if (total !== T) {
       throw new Error(`分摊校验失败：Σ=${total} ≠ T=${T}`);
     }
-    const totalForeign = members.reduce((s, m) => s + (m.cost_foreign_amount ?? 0), 0);
-    const effectiveRate =
-      mode.mode === "checkout" && totalForeign > 0
-        ? normRate(
-            Number(
-              (
-                (BigInt(batch.checkout_foreign_amount!) *
-                  BigInt(Math.round(normRate(batch.exchange_rate!) * 1e6))) /
-                BigInt(totalForeign)
-              )
-            ) / 1e6
-          )
-        : null;
+    // 手动模式把输入汇率回写为团汇率（四态锚点 = 团汇率）
+    const newRate = mode.mode === "manual" ? allocatedRate : batch.exchange_rate;
+    const effectiveRate = computeEffectiveRate(batch.checkout_foreign_amount, newRate, members);
     await db.execute(
       `UPDATE batches SET allocated_at = ?, allocated_checkout = ?, allocated_rate = ?,
-        allocated_member_count = ?, effective_rate = ? WHERE id = ?`,
-      [nowUtc(), allocatedCheckout, allocatedRate, members.length, effectiveRate, batchId]
+        allocated_member_count = ?, effective_rate = ?, exchange_rate = ? WHERE id = ?`,
+      [nowUtc(), allocatedCheckout, allocatedRate, members.length, effectiveRate, newRate, batchId]
     );
     await db.execute("COMMIT");
     return { T, total };

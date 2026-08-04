@@ -246,7 +246,8 @@ export async function updateOrder(
   };
   validate(merged);
 
-  if (merged.batch_id != null && merged.batch_id !== existing.batch_id) {
+  // 成员不变量：只要编辑后仍在团内就必须持续成立（改 site/币种/清空外币也受约束）
+  if (merged.batch_id != null) {
     await assertBatchMembership(db, merged.batch_id, {
       site_id: merged.site_id,
       cost_foreign_amount: merged.cost_foreign_amount ?? null,

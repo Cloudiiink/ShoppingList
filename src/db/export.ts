@@ -1,6 +1,7 @@
 import type { OrderRow } from "./types";
 import { fenToYuan } from "./rules";
 import { isoToLocalDate } from "@/lib/time";
+import { SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
 
 /** CSV 导出（§6.5）：订单全字段 + batch_name，金额导出为「元」两位小数 */
 
@@ -16,32 +17,23 @@ function dt(iso: string | null): string {
   return iso ? isoToLocalDate(iso) : "";
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  paid_pending_ship: "待发货",
-  shipped: "已发货",
-  done: "完结",
-  refunded: "退款",
-  lost: "丢失",
-  in_stock: "在库",
-  listed: "挂单中",
-  consumed: "自用",
-};
-
 export function ordersToCsv(
   orders: OrderRow[],
   batchNames: Map<number, string>
 ): string {
   const header = [
-    "订单号", "类型", "状态", "批次", "买家微信", "买家备注", "地区",
+    "ID", "订单号", "类型", "状态", "批次", "买家微信", "买家备注", "地区",
     "商品", "款式备注", "预订时间", "下单时间", "发货时间", "关闭时间",
     "转售出时间", "快递单号", "外币成本", "币种", "订单汇率",
     "买入价(元)", "买入价来源", "卖出价(元)", "邮费(元)", "收支调整", "备注",
+    "创建时间", "更新时间", "结算变更时间",
   ];
   const rows = orders.map((o) =>
     [
+      String(o.id),
       o.order_no,
       o.order_type === "customer" ? "代购" : "囤货",
-      STATUS_LABEL[o.status] ?? o.status,
+      STATUS_LABEL[o.status],
       o.batch_id != null ? (batchNames.get(o.batch_id) ?? "") : "",
       o.buyer_wechat ?? "",
       o.buyer_alias ?? "",
@@ -58,11 +50,14 @@ export function ordersToCsv(
       o.cost_currency ?? "",
       o.exchange_rate != null ? String(o.exchange_rate) : "",
       yuan(o.buy_price_cny),
-      { estimated: "预估", manual: "手动", batch_allocated: "分摊" }[o.buy_price_source],
+      SOURCE_LABEL[o.buy_price_source],
       yuan(o.sell_price_cny),
       yuan(o.shipping_fee),
       o.adjustments,
       o.note ?? "",
+      dt(o.created_at),
+      dt(o.updated_at),
+      dt(o.settlement_updated_at),
     ]
       .map(esc)
       .join(",")

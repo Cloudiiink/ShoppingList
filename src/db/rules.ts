@@ -231,6 +231,17 @@ export function statusChangePatch(
 }
 
 // ---------------------------------------------------------------------------
+// 转售出（§6.3，矩阵外的特殊动作，合法来源规则同样只住在这里）
+// ---------------------------------------------------------------------------
+
+const CONVERTIBLE_STOCK: OrderStatus[] = ["in_stock", "listed", "consumed"];
+
+/** 囤货转售出合法来源：lost 需先按矩阵回退 in_stock */
+export function canConvertStock(status: OrderStatus): boolean {
+  return CONVERTIBLE_STOCK.includes(status);
+}
+
+// ---------------------------------------------------------------------------
 // 结算分摊（§5.3）
 // ---------------------------------------------------------------------------
 
@@ -264,7 +275,9 @@ export function allocate(
   const F = locked.reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
   const P = T - F;
   if (P < 0) {
-    throw new Error(`固定成本 ¥${F / 100} 已超过目标总额 ¥${T / 100}`);
+    throw new Error(
+      `固定成本 ¥${F / 100} 已超过目标总额 ¥${T / 100}，请检查 manual 成本或 checkout/汇率`
+    );
   }
 
   // 成员必须是外币成员（入团校验保证），防御性检查
