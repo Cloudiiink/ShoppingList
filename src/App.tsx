@@ -3,6 +3,7 @@ import { initDb } from "@/db/connection";
 import { listSites } from "@/db/sites";
 import { OrdersPage } from "@/pages/orders/OrdersPage";
 import { BatchesPage } from "@/pages/batches/BatchesPage";
+import { InventoryPage } from "@/pages/inventory/InventoryPage";
 import { cn } from "@/lib/utils";
 import type { SiteRow, SqlDb } from "@/db/types";
 
@@ -17,7 +18,7 @@ type Page = (typeof NAV)[number];
 const PAGE_TICKET: Record<Page, string | null> = {
   订单: null,
   团: null,
-  库存: "Ticket #4",
+  库存: null,
   统计: "Ticket #6",
   设置: "Ticket #7",
 };
@@ -82,6 +83,8 @@ export default function App() {
           <OrdersPage db={state.db} sites={state.sites} />
         ) : page === "团" ? (
           <BatchesPage db={state.db} sites={state.sites} />
+        ) : page === "库存" ? (
+          <InventoryPage db={state.db} sites={state.sites} />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
             {page}页将在 {PAGE_TICKET[page]} 实现
