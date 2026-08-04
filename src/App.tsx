@@ -5,6 +5,7 @@ import { OrdersPage } from "@/pages/orders/OrdersPage";
 import { BatchesPage } from "@/pages/batches/BatchesPage";
 import { InventoryPage } from "@/pages/inventory/InventoryPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
+import { StatsPage } from "@/pages/stats/StatsPage";
 import { newestBackupAgeDays } from "@/lib/backupFiles";
 import { cn } from "@/lib/utils";
 import type { SiteRow, SqlDb } from "@/db/types";
@@ -106,6 +107,8 @@ export default function App() {
           <InventoryPage db={state.db} sites={state.sites} />
         ) : page === "设置" ? (
           <SettingsPage db={state.db} onSitesChanged={onSitesChanged} />
+        ) : page === "统计" ? (
+          <StatsPage db={state.db} />
         ) : (
           <div className="flex h-full items-center justify-center text-muted-foreground">
             {page}页将在 {PAGE_TICKET[page]} 实现
