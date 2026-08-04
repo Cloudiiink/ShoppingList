@@ -1,10 +1,11 @@
-# 订单管理系统 - 系统设计文档（v2.5 定稿）
+# 订单管理系统 - 系统设计文档（v2.6 定稿）
 
 > v2.1：并入 Codex 审查的 10 项 Critical 决策（金额整数化、状态转移矩阵、备份安全等）
 > v2.2：并入第二轮审查的 6 项 Critical 决策（统一汇率升级为结算分摊、buy_price_source、ProfitResult 三态、团收益归一 canonical_profit、四态派生、团成员币种不变量）
 > v2.3：并入第三轮审查的 8 项 Blocker 决策（转移闸门如实描述、refunded 判定提前、stock lost 计亏损、回退清 shipped_at 按目标状态、手动汇率四态锚点、分摊分母与边界、禁止纯人民币成员入团、batch_allocated 冻结）
 > v2.4：并入第三轮审查的 6 项 High 风险决策（STRICT 表 + canonical DDL、adjustments DDL 约束、跨表不变量 db/ 事务校验、settlement_updated_at 过期检测、汇率归一化、条件不变量双闸）
 > v2.5：并入第三轮审查的 8 项 Medium + 3 项 Minor 决策（UTC ISO-8601 时间戳、五步启动序列、备份秒级命名 + 先校验后清理 + fs plugin、手动恢复与威胁模型、转售出允许 consumed、迁移单事务、订单号格式过滤、索引去重、伪码字段名统一、db/ 目录树补 backup/export）
+> v2.6：CI/CD 决策（GitHub Actions 测试 + tauri-action 打包发布，本地不装 Rust；vitest + better-sqlite3 测试策略）
 
 ## 1. 项目概述
 
@@ -27,7 +28,10 @@ macOS 桌面应用（Tauri + React + SQLite），服务于个人代购 + 囤货�
 | 图表 | Recharts | 统计页两个图 |
 | 数据库 | SQLite via **tauri-plugin-sql** | 前端直连，不经 Rust；`PRAGMA foreign_keys = ON` |
 | 汇率查询 | 前端 fetch open.er-api.com | 免 key，失败降级为手填 |
-| 打包 | macOS dmg，**无签名、无自动更新** | 自用，首次右键打开 |
+| 打包/发布 | **GitHub Actions CI**：push/PR 跑测试；打 tag 触发 `tauri-apps/tauri-action` 在 macos runner 构建 dmg → 发布到 GitHub Releases；无签名、无自动更新，首次右键打开 | **本地不装 Rust 工具链**，编译全在 CI |
+| 测试 | vitest | rules.ts 纯函数单测（转移矩阵/canonical_profit/分摊/normRate/时间换算）；db/ SQL 层用 better-sqlite3 集成测试（预编译二进制，不需 Rust） |
+
+> **权衡（已确认接受）**：本地无 Rust ⇒ 无法 `tauri dev` 跑完整 app；UI 开发用 `vite dev` 纯前端 + mock db/ 层，完整验证靠 CI。
 
 ### 铁律：SQL 只许出现在 `src/db/`
 
@@ -495,7 +499,7 @@ canonical_profit(order): ProfitResult
 7. **统计页**：卡片 + 图表 + 异常账本
 8. **设置页**：网站管理、CSV 导出、备份
 9. **打磨**：表单校验、空状态、错误处理
-10. **打包**：macOS dmg
+10. **CI/CD**：GitHub Actions workflow——push/PR 跑 vitest 单测 + better-sqlite3 集成测试；`v*` tag 触发 tauri-action 构建 dmg 并发布 GitHub Release
 
 ---
 
@@ -530,4 +534,4 @@ canonical_profit(order): ProfitResult
 | 转售出来源 | in_stock / listed / **consumed** 可转（清 closed_at）；lost 不可转，需先回退 in_stock |
 | 历史数据 | 不做导入器，手动补录 |
 | 备份 | `VACUUM INTO` + 秒级时间戳命名 + **integrity_check 通过后才删旧**、保留 2 份 + 7 天提醒；文件操作走 fs plugin（scope 限备份目录）；**威胁模型：只防逻辑损坏，恢复为手动替换文件** |
-| 分发 | dmg 无签名无自动更新 |
+| 分发 | **GitHub CI 构建 + Releases 发布 dmg**（tauri-action，macos runner）；本地不装 Rust（权衡：无法本地 tauri dev，UI 靠 vite dev + mock）；无签名无自动更新 |
