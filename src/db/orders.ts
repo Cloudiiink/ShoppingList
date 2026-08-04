@@ -15,6 +15,7 @@ import {
   statusChangePatch,
 } from "./rules";
 import type { Adjustment } from "./rules";
+import { assertBatchMembership } from "./batches";
 
 /** 创建/编辑订单的输入 */
 export interface OrderInput {
@@ -95,6 +96,13 @@ export async function createOrder(
   // BEGIN IMMEDIATE 内取当日最大序号 +1，UNIQUE 约束兜底
   await db.execute("BEGIN IMMEDIATE");
   try {
+    if (input.batch_id != null) {
+      await assertBatchMembership(db, input.batch_id, {
+        site_id: input.site_id,
+        cost_foreign_amount: input.cost_foreign_amount ?? null,
+        cost_currency: input.cost_currency ?? null,
+      });
+    }
     const orderNo = await nextOrderNo(db);
     const hasSettlement =
       input.batch_id != null ||
@@ -237,6 +245,14 @@ export async function updateOrder(
     ...patch,
   };
   validate(merged);
+
+  if (merged.batch_id != null && merged.batch_id !== existing.batch_id) {
+    await assertBatchMembership(db, merged.batch_id, {
+      site_id: merged.site_id,
+      cost_foreign_amount: merged.cost_foreign_amount ?? null,
+      cost_currency: merged.cost_currency ?? null,
+    });
+  }
 
   const now = nowUtc();
   const settlementTouched = SETTLEMENT_FIELDS.some(

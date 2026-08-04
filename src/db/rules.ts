@@ -3,7 +3,7 @@
  * 金额换算、汇率归一化、时间戳规则、canonical_profit、状态转移矩阵实现于此。
  */
 
-import type { OrderRow, OrderStatus, OrderType } from "./types";
+import type { BatchRow, OrderRow, OrderStatus, OrderType } from "./types";
 
 /** 当前时间，UTC ISO-8601（全局唯一入库格式） */
 export function nowUtc(): string {
@@ -228,4 +228,113 @@ export function statusChangePatch(
     patch.shipped_at = null;
   }
   return patch;
+}
+
+// ---------------------------------------------------------------------------
+// 结算分摊（§5.3）
+// ---------------------------------------------------------------------------
+
+export interface AllocationMember {
+  id: number;
+  cost_foreign_amount: number | null;
+  buy_price_cny: number | null;
+  buy_price_source: "estimated" | "manual" | "batch_allocated";
+}
+
+export interface AllocationResult {
+  id: number;
+  buy_price_cny: number;
+}
+
+/**
+ * 分摊算法：F = manual 成员锁定不动，P = T − F 按外币成本权重分摊，
+ * floor 后余数按最大余数法逐分补齐（并列 order_id 小者优先）。
+ * 构造性保证 Σ结果 ≡ T。分母只含可分摊单的外币成本。
+ */
+export function allocate(
+  members: AllocationMember[],
+  T: number
+): AllocationResult[] {
+  const locked = members.filter((m) => m.buy_price_source === "manual");
+  const eligible = members.filter((m) => m.buy_price_source !== "manual");
+
+  if (eligible.length === 0) {
+    throw new Error("无可分摊单：所有成员成本均已手动锁定");
+  }
+  const F = locked.reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
+  const P = T - F;
+  if (P < 0) {
+    throw new Error(`固定成本 ¥${F / 100} 已超过目标总额 ¥${T / 100}`);
+  }
+
+  // 成员必须是外币成员（入团校验保证），防御性检查
+  const denom = eligible.reduce(
+    (s, m) => s + BigInt(m.cost_foreign_amount ?? 0),
+    0n
+  );
+  if (denom <= 0n) throw new Error("可分摊单外币成本合计必须大于 0");
+
+  const bigP = BigInt(P);
+  const shares = eligible.map((m) => {
+    const prod = bigP * BigInt(m.cost_foreign_amount!);
+    return {
+      id: m.id,
+      floor: prod / denom,
+      remainder: prod % denom,
+    };
+  });
+
+  let leftover = bigP - shares.reduce((s, x) => s + x.floor, 0n);
+  // 最大余数法：余数降序，并列 order_id 小者优先
+  const order = [...shares].sort((a, b) =>
+    a.remainder === b.remainder
+      ? a.id - b.id
+      : a.remainder > b.remainder
+        ? -1
+        : 1
+  );
+  const bonus = new Map<number, number>();
+  for (const s of order) {
+    if (leftover <= 0n) break;
+    bonus.set(s.id, 1);
+    leftover -= 1n;
+  }
+
+  return shares.map((s) => ({
+    id: s.id,
+    buy_price_cny: Number(s.floor) + (bonus.get(s.id) ?? 0),
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// 结算四态（§3.2 派生，不落库；按锚点分支）
+// ---------------------------------------------------------------------------
+
+export type SettlementState = "unsettled" | "pending" | "allocated" | "stale";
+
+export function settlementState(
+  batch: BatchRow,
+  members: Pick<OrderRow, "settlement_updated_at">[]
+): SettlementState {
+  if (batch.exchange_rate === null) return "unsettled";
+  if (batch.allocated_at === null) return "pending";
+  if (batch.allocated_rate !== batch.exchange_rate) return "stale";
+  // checkout 模式锚定 checkout；手动模式 allocated_checkout 存 NULL 不参与
+  if (
+    batch.allocated_checkout !== null &&
+    batch.allocated_checkout !== batch.checkout_foreign_amount
+  ) {
+    return "stale";
+  }
+  if (members.length !== batch.allocated_member_count) return "stale";
+  if (
+    members.some(
+      (m) =>
+        m.settlement_updated_at !== null &&
+        m.settlement_updated_at > batch.allocated_at!
+    )
+  ) {
+    return "stale";
+  }
+  return "allocated";
 }

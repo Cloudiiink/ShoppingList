@@ -39,6 +39,8 @@ interface Props {
   adjustmentGroups: string[];
   /** 传入 = 编辑；null = 新建 */
   order: OrderRow | null;
+  /** 从团详情「+ 加订单」进入：批次与币种锁定 */
+  presetBatch?: BatchRow | null;
   open: boolean;
   onClose: (saved: boolean) => void;
 }
@@ -64,8 +66,8 @@ interface FormState {
   note: string;
 }
 
-function initFrom(order: OrderRow | null): FormState {
-  return {
+function initFrom(order: OrderRow | null, presetBatch?: BatchRow | null): FormState {
+  const base: FormState = {
     order_type: order?.order_type ?? "customer",
     buyer_wechat: order?.buyer_wechat ?? "",
     buyer_alias: order?.buyer_alias ?? "",
@@ -85,10 +87,16 @@ function initFrom(order: OrderRow | null): FormState {
     adjustments: order ? parseAdjustments(order.adjustments) : [],
     note: order?.note ?? "",
   };
+  if (!order && presetBatch) {
+    base.batch_id = String(presetBatch.id);
+    base.site_id = String(presetBatch.site_id);
+    base.cost_currency = presetBatch.currency;
+  }
+  return base;
 }
 
-export function OrderForm({ db, sites, batches, adjustmentGroups, order, open, onClose }: Props) {
-  const [f, setF] = useState<FormState>(() => initFrom(order));
+export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetBatch, open, onClose }: Props) {
+  const [f, setF] = useState<FormState>(() => initFrom(order, presetBatch));
   const [error, setError] = useState("");
   const [rateLoading, setRateLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<ProductRow[]>([]);
@@ -96,12 +104,12 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, open, o
 
   useEffect(() => {
     if (open) {
-      setF(initFrom(order));
+      setF(initFrom(order, presetBatch));
       setError("");
       setSuggestions([]);
       setTargetStatus("");
     }
-  }, [open, order]);
+  }, [open, order, presetBatch]);
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setF((prev) => ({ ...prev, [k]: v }));
@@ -256,7 +264,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, open, o
           </div>
           <div>
             <Label>批次（空 = 散单）</Label>
-            <Select value={f.batch_id} onChange={(e) => set("batch_id", e.target.value)}>
+            <Select value={f.batch_id} disabled={!!presetBatch} onChange={(e) => set("batch_id", e.target.value)}>
               <option value="">散单</option>
               {batches.map((b) => (
                 <option key={b.id} value={b.id}>{b.name}</option>
@@ -289,7 +297,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, open, o
             <Label>外币金额</Label>
             <div className="flex gap-1">
               <Input value={f.cost_foreign} onChange={(e) => set("cost_foreign", e.target.value)} placeholder="0.00" />
-              <Select className="w-24" value={f.cost_currency} onChange={(e) => set("cost_currency", e.target.value)}>
+              <Select className="w-24" value={f.cost_currency} disabled={!!presetBatch} onChange={(e) => set("cost_currency", e.target.value)}>
                 {CURRENCIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
