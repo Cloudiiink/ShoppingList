@@ -28,7 +28,7 @@ macOS 桌面应用（Tauri + React + SQLite），服务于个人代购 + 囤货�
 | 图表 | Recharts | 统计页两个图 |
 | 数据库 | SQLite via **tauri-plugin-sql** | 前端直连，不经 Rust；`PRAGMA foreign_keys = ON` |
 | 汇率查询 | 前端 fetch open.er-api.com | 免 key，失败降级为手填 |
-| 打包/发布 | **GitHub Actions CI**：push/PR 跑测试；打 tag 触发 `tauri-apps/tauri-action` 在 macos runner 构建 dmg → 发布到 GitHub Releases；无签名、无自动更新，首次右键打开 | **本地不装 Rust 工具链**，编译全在 CI |
+| 打包/发布 | **GitHub Actions CI**：push/PR 跑测试；打 tag 触发 `tauri-apps/tauri-action` 在 macos runner 构建 dmg → 发布到 GitHub Releases；无签名、无自动更新 | **本地不装 Rust 工具链**，编译全在 CI；首次安装需 `xattr -cr` 清 quarantine（"已损坏"提示），见使用手册 |
 | 测试 | vitest | rules.ts 纯函数单测（转移矩阵/canonical_profit/分摊/normRate/时间换算）；db/ SQL 层用 better-sqlite3 集成测试（预编译二进制，不需 Rust） |
 
 > **权衡（已确认接受）**：本地无 Rust ⇒ 无法 `tauri dev` 跑完整 app；UI 开发用 `vite dev` 纯前端 + mock db/ 层，完整验证靠 CI。
@@ -534,4 +534,4 @@ canonical_profit(order): ProfitResult
 | 转售出来源 | in_stock / listed / **consumed** 可转（清 closed_at）；lost 不可转，需先回退 in_stock |
 | 历史数据 | 不做导入器，手动补录 |
 | 备份 | `VACUUM INTO` + 秒级时间戳命名 + **integrity_check 通过后才删旧**、保留 2 份 + 7 天提醒；文件操作走 fs plugin（scope 限备份目录）；**威胁模型：只防逻辑损坏，恢复为手动替换文件** |
-| 分发 | **GitHub CI 构建 + Releases 发布 dmg**（tauri-action，macos runner）；本地不装 Rust（权衡：无法本地 tauri dev，UI 靠 vite dev + mock）；无签名无自动更新 |
+| 分发 | **GitHub CI 构建 + Releases 发布 dmg**（tauri-action，macos runner）；本地不装 Rust（权衡：无法本地 tauri dev，UI 靠 vite dev + mock）；无签名无自动更新，首次安装 `xattr -cr` 清 quarantine |
