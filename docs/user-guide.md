@@ -14,7 +14,15 @@
 
 ## 安装
 
-从 GitHub Releases 下载 dmg，拖进「应用程序」。首次打开**右键 → 打开**（无签名，macOS 会拦一次）。
+从 GitHub Releases 下载 dmg，拖进「应用程序」。
+
+**首次打开提示"已损坏"**：这是因为 app 无签名，macOS Gatekeeper 拦截。打开「终端」执行一次：
+
+```bash
+xattr -cr /Applications/order-tracker.app
+```
+
+之后即可正常双击打开（每次升级覆盖安装后如再报"已损坏"，重跑一次该命令）。
 
 ## 五分钟上手
 
