@@ -47,16 +47,18 @@ describe("order-tracker 冒烟", () => {
       console.log("[diag] getUrl failed:", String(e));
     }
     try {
+      console.log(
+        "[diag] BOOT LOG:",
+        await browser.execute(() => localStorage.getItem("ot-boot-log"))
+      );
+    } catch (e) {
+      console.log("[diag] boot log failed:", String(e));
+    }
+    try {
       const body = await $("body");
       console.log("[diag] BODY TEXT:", JSON.stringify(await body.getText()));
     } catch (e) {
       console.log("[diag] body getText failed:", String(e));
-    }
-    try {
-      const src = await browser.getPageSource();
-      console.log("[diag] SOURCE:", src.slice(0, 3000));
-    } catch (e) {
-      console.log("[diag] getPageSource failed:", String(e));
     }
   });
 
