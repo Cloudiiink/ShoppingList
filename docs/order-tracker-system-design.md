@@ -67,7 +67,7 @@ UI 组件中禁止出现任何 SQL 字符串，一切读写经过 `db/` 模块�
 
 ### 数据库位置
 
-`~/Library/Application Support/order-tracker/tracker.db`
+`~/Library/Application Support/com.cloudiiink.shoppinglist/tracker.db`
 
 ---
 

@@ -1,7 +1,8 @@
 {
-  "name": "order-tracker",
+  "name": "shoppinglist",
   "private": true,
   "version": "1.0.3",
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",

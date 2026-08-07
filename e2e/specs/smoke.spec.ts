@@ -58,9 +58,9 @@ async function expectNoClosedPool() {
   await expect($("body")).not.toHaveText(/初始化失败/);
 }
 
-describe("order-tracker 冒烟", () => {
+describe("ShoppingList 冒烟", () => {
   it("启动：初始化完成、五个导航出现", async () => {
-    await (await $(byTextContains("nav", "order-tracker"))).waitForExist({
+    await (await $(byTextContains("nav", "ShoppingList"))).waitForExist({
       timeout: 60_000,
     });
     for (const n of ["订单", "团", "库存", "统计", "设置"]) {

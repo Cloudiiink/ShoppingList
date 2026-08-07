@@ -1,15 +1,15 @@
-# order-tracker
+# ShoppingList
 
-个人代购 + 囤货订单管理 macOS 桌面应用（Tauri 2 + React + SQLite）。
+个人代购 + 囤货订单管理 macOS 桌面应用（Tauri 2 + React + SQLite）。GPL-3.0 协议开源。
 
 ## 安装
 
-1. 从 [Releases](https://github.com/Cloudiiink/order-tracker/releases) 下载最新的 `order-tracker_x.y.z_universal.dmg`（通用包，Intel 和 Apple Silicon 均可用，要求 macOS 13+）
-2. 打开 dmg，将 `order-tracker.app` 拖入「应用程序」
+1. 从 [Releases](https://github.com/Cloudiiink/ShoppingList/releases) 下载最新的 `ShoppingList_x.y.z_universal.dmg`（通用包，Intel 和 Apple Silicon 均可用，要求 macOS 13+）
+2. 打开 dmg，将 `ShoppingList.app` 拖入「应用程序」
 3. **首次启动前必须执行**（应用未签名公证，不执行会报"已损坏，无法打开"）：
 
 ```bash
-xattr -cr /Applications/order-tracker.app
+xattr -cr /Applications/ShoppingList.app
 ```
 
 之后即可正常启动。

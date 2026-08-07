@@ -19,7 +19,7 @@
 **首次打开提示"已损坏"**：这是因为 app 无签名，macOS Gatekeeper 拦截。打开「终端」执行一次：
 
 ```bash
-xattr -cr /Applications/order-tracker.app
+xattr -cr /Applications/ShoppingList.app
 ```
 
 之后即可正常双击打开（每次升级覆盖安装后如再报"已损坏"，重跑一次该命令）。
@@ -109,7 +109,15 @@ xattr -cr /Applications/order-tracker.app
 收益显示「—」，统计页会橙色提示「N 单未补成本，统计不完整」——绝不会静默当 0。
 
 **数据在哪？安全吗？**
-存在本机 `~/Library/Application Support/order-tracker/tracker.db`。设置页点「立即备份」生成快照（保留最新 2 份）；超过 7 天没备份会提醒你。备份只防误操作，**建议定期把备份文件拷到 iCloud 或移动硬盘**。
+存在本机 `~/Library/Application Support/com.cloudiiink.shoppinglist/tracker.db`（v1.0.3 起应用改名 ShoppingList，目录随 identifier 变更）。设置页点「立即备份」生成快照（保留最新 2 份）；超过 7 天没备份会提醒你。备份只防误操作，**建议定期把备份文件拷到 iCloud 或移动硬盘**。
+
+**从 order-tracker 升级到 ShoppingList（数据迁移）**
+新版 identifier 变了，首次打开会看到空库。退出两个 app 后把旧数据拷过去即可：
+
+```bash
+mkdir -p ~/Library/Application\ Support/com.cloudiiink.shoppinglist
+cp ~/Library/Application\ Support/com.cloudiiink.ordertracker/tracker.db* ~/Library/Application\ Support/com.cloudiiink.shoppinglist/
+```
 
 **换电脑/重装怎么恢复？**
 退出 app → 把备份文件改名为 `tracker.db` 放进上面那个目录 → 重新打开。

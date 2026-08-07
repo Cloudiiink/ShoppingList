@@ -27,7 +27,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "order-tracker ${{ github.ref_name }}"
+          releaseName: "ShoppingList ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
           args: --target universal-apple-darwin
