@@ -38,19 +38,6 @@ async function recoverPool(): Promise<void> {
   serialized?.swapInner(raw);
 }
 
-/** [临时诊断] 启动步骤落 localStorage，e2e 可读（UI 失败页无法展示细节） */
-function bootLog(entry: Record<string, unknown>): void {
-  try {
-    const log = JSON.parse(
-      localStorage.getItem("ot-boot-steps") ?? "[]"
-    ) as unknown[];
-    log.push({ t: Date.now(), ...entry });
-    localStorage.setItem("ot-boot-steps", JSON.stringify(log));
-  } catch {
-    /* 非浏览器环境（单测）静默 */
-  }
-}
-
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export async function initDb(): Promise<SqlDb> {
@@ -78,7 +65,6 @@ export async function initDb(): Promise<SqlDb> {
       // Step 4: 迁移
       await migrate(conn);
 
-      bootLog({ attempt, ok: true });
       serialized = conn;
       db = conn;
       // 启动完成后才注册池恢复：启动期由本函数自身的重试循环负责，
@@ -87,11 +73,6 @@ export async function initDb(): Promise<SqlDb> {
       return conn;
     } catch (e) {
       lastErr = e;
-      bootLog({
-        attempt,
-        ok: false,
-        err: e instanceof Error ? e.message : String(e),
-      });
       // 关键恢复手段：关闭当前池（释放其连接持有的全部锁/悬挂事务），
       // 下次尝试用全新池的全新连接。锁源无论挂在池内哪条连接上都能自愈。
       await raw.close(DB_KEY).catch(() => {});
