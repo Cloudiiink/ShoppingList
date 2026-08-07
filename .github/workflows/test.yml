@@ -7,7 +7,8 @@ on:
 
 jobs:
   test:
-    runs-on: macos-latest
+    # Linux 1x 计费（macOS 是 10x）；测试无平台依赖，无需 macOS
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

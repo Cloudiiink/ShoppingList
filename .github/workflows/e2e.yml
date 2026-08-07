@@ -1,10 +1,10 @@
 name: e2e
 
-# 冒烟 E2E（macOS 嵌入式 WebDriver）。暂不上 PR：首轮调试期避免红绿噪声，
-# 稳定后可加 pull_request 触发。本地无 Rust 跑不了，CI 专供。
+# 冒烟 E2E（macOS 嵌入式 WebDriver）。仅手动触发：macOS runner 按 10 倍费率
+# 计分钟且含 Rust 构建，不挂在每次 push 上烧额度。需要时：
+#   gh workflow run e2e.yml
+# 或 Actions 页面 → e2e → Run workflow。本地无 Rust 跑不了，CI 专供。
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
