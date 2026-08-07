@@ -1,26 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import Database from "better-sqlite3";
-import { migrate } from "./migrate";
 import { createOrder, changeStatus } from "./orders";
 import { convertStockToCustomer } from "./inventory";
 import { createBatch } from "./batches";
+import { freshDb, seedSites } from "./testUtils";
 import type { SqlDb } from "./types";
-
-function wrap(raw: Database.Database): SqlDb {
-  return {
-    execute: async (sql, params = []) => raw.prepare(sql).run(...(params as never[])),
-    select: async <T,>(sql: string, params: unknown[] = []) =>
-      raw.prepare(sql).all(...(params as never[])) as T,
-  };
-}
 
 let db: SqlDb;
 
 beforeEach(async () => {
-  db = wrap(new Database(":memory:"));
-  await db.execute("PRAGMA foreign_keys = ON");
-  await migrate(db);
-  await db.execute("INSERT INTO sites (name) VALUES ('JAYD')");
+  db = await freshDb();
+  await seedSites(db, "JAYD");
 });
 
 const stockInput = {

@@ -1,0 +1,32 @@
+import Database from "better-sqlite3";
+import { migrate } from "./migrate";
+import type { SqlDb } from "./types";
+
+/** better-sqlite3 包装成 SqlDb 接口（测试专用） */
+export function wrap(raw: Database.Database): SqlDb {
+  return {
+    execute: async (sql, params = []) => raw.prepare(sql).run(...(params as never[])),
+    select: async <T,>(sql: string, params: unknown[] = []) =>
+      raw.prepare(sql).all(...(params as never[])) as T,
+  };
+}
+
+/** 内存库 + 外键开启 + 完成迁移；站点等种子数据用 seedSites 按需加 */
+export async function freshDb(): Promise<SqlDb> {
+  const db = wrap(new Database(":memory:"));
+  await db.execute("PRAGMA foreign_keys = ON");
+  await migrate(db);
+  return db;
+}
+
+/** 插入站点种子，返回首站点 id（单站点场景方便直接用） */
+export async function seedSites(db: SqlDb, ...names: string[]): Promise<number> {
+  const list = names.length > 0 ? names : ["JAYD"];
+  for (const name of list) {
+    await db.execute("INSERT INTO sites (name) VALUES (?)", [name]);
+  }
+  const rows = await db.select<{ id: number }[]>(
+    "SELECT MIN(id) AS id FROM sites"
+  );
+  return rows[0]!.id;
+}

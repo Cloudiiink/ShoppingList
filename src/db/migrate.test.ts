@@ -1,24 +1,17 @@
 import { describe, it, expect } from "vitest";
 import Database from "better-sqlite3";
 import { migrate } from "./migrate";
+import { wrap } from "./testUtils";
 import type { SqlDb } from "./types";
 
-/** better-sqlite3 包装成 SqlDb 接口（测试专用） */
-function wrap(raw: Database.Database): SqlDb {
-  return {
-    execute: async (sql, params = []) => raw.prepare(sql).run(...(params as never[])),
-    select: async <T,>(sql: string, params: unknown[] = []) =>
-      raw.prepare(sql).all(...(params as never[])) as T,
-  };
-}
-
-function freshDb(): SqlDb {
+/** 裸库（不 migrate）——本文件测的就是 migrate 本身 */
+function rawDb(): SqlDb {
   return wrap(new Database(":memory:"));
 }
 
 describe("migrate", () => {
   it("全新库：user_version 推进到最新版本，四表建成", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     const [{ user_version }] = await db.select<{ user_version: number }[]>(
       "PRAGMA user_version"
@@ -36,7 +29,7 @@ describe("migrate", () => {
   });
 
   it("幂等：重复迁移不报错、版本不重复推进", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await migrate(db);
     const [{ user_version }] = await db.select<{ user_version: number }[]>(
@@ -46,7 +39,7 @@ describe("migrate", () => {
   });
 
   it("STRICT 生效：INTEGER 列写入非整数报错", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await db.execute(
       "INSERT INTO sites (name) VALUES ('JAYD')"
@@ -60,7 +53,7 @@ describe("migrate", () => {
   });
 
   it("adjustments 约束：NULL 与坏 JSON 被拒，缺省为 '[]'", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await db.execute("INSERT INTO sites (name) VALUES ('JAYD')");
     const cols =
@@ -84,7 +77,7 @@ describe("migrate", () => {
   });
 
   it("枚举域 CHECK：stock 单不允许 customer 状态", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await db.execute("INSERT INTO sites (name) VALUES ('JAYD')");
     await expect(
@@ -95,7 +88,7 @@ describe("migrate", () => {
   });
 
   it("条件不变量：customer 缺买家/卖出价被拒；stock 缺买入价被拒", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await db.execute("INSERT INTO sites (name) VALUES ('JAYD')");
     await expect(
@@ -111,7 +104,7 @@ describe("migrate", () => {
   });
 
   it("外币字段同空同填", async () => {
-    const db = freshDb();
+    const db = rawDb();
     await migrate(db);
     await db.execute("INSERT INTO sites (name) VALUES ('JAYD')");
     await expect(
