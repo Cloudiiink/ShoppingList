@@ -1,0 +1,26 @@
+name: e2e
+
+# 冒烟 E2E（macOS 嵌入式 WebDriver）。暂不上 PR：首轮调试期避免红绿噪声，
+# 稳定后可加 pull_request 触发。本地无 Rust 跑不了，CI 专供。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: npm ci
+      # debug 构建（含 tauri-plugin-wdio-webdriver），--no-bundle 跳过 dmg 打包
+      - run: npm run tauri build -- --debug --no-bundle
+      - run: npm run test:e2e
+      # 排障：若报 wdio-webdriver ACL 相关错误，需在构建前注入
+      # capabilities/wdio.json（wdio-webdriver:default），release 构建不含此文件

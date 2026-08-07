@@ -18,3 +18,8 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 tauri-plugin-fs = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# E2E 专用（仅 debug 构建编译/注册，release 零侵入）：嵌入式 WebDriver 服务器，
+# 供 @wdio/tauri-service 的 embedded provider 连接。见 .github/workflows/e2e.yml
+[target.'cfg(debug_assertions)'.dependencies]
+tauri-plugin-wdio-webdriver = "1"

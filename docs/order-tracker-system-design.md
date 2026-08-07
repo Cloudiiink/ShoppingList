@@ -29,7 +29,7 @@ macOS 桌面应用（Tauri + React + SQLite），服务于个人代购 + 囤货�
 | 数据库 | SQLite via **tauri-plugin-sql** | 前端直连，不经 Rust；`PRAGMA foreign_keys = ON` |
 | 汇率查询 | 前端 fetch open.er-api.com | 免 key，失败降级为手填 |
 | 打包/发布 | **GitHub Actions CI**：push/PR 跑测试；打 tag 触发 `tauri-apps/tauri-action` 在 macos runner 构建 dmg → 发布到 GitHub Releases；无签名、无自动更新 | **本地不装 Rust 工具链**，编译全在 CI；首次安装需 `xattr -cr` 清 quarantine（"已损坏"提示），见使用手册 |
-| 测试 | vitest | rules.ts 纯函数单测（转移矩阵/canonical_profit/分摊/normRate/时间换算）；db/ SQL 层用 better-sqlite3 集成测试（预编译二进制，不需 Rust） |
+| 测试 | vitest + Testing Library + WebdriverIO | ①rules.ts 纯函数单测；②db/ SQL 层 better-sqlite3 集成测试（预编译二进制，不需 Rust）；③页面 jsdom 交互测试（真库当 prop，StatsPage 除外）；④E2E 仅 CI（嵌入式 WebDriver，debug 构建）；详见 §9 测试策略 |
 
 > **权衡（已确认接受）**：本地无 Rust ⇒ 无法 `tauri dev` 跑完整 app；UI 开发用 `vite dev` 纯前端 + mock db/ 层，完整验证靠 CI。
 
@@ -527,7 +527,7 @@ canonical_profit(order): ProfitResult
 | 回退时间戳 | 回退清 closed_at；**目标是 paid_pending_ship 一律清 shipped_at（无论来源状态）**、保留 tracking_no |
 | done 进入条件 | 纯手动 + 邮费未填软确认 |
 | 默认视图 | 进行中单 ∪ 最新活跃团（按 id 去重） |
-| 数据访问层 | tauri-plugin-sql + `src/db/` 铁律（不用 sqlx/Rust commands）；**五步启动序列**：plugin 注册 → load 单例 → 验证 foreign_keys → migrate → 就绪 |
+| 数据访问层 | tauri-plugin-sql + `src/db/` 铁律（不用 sqlx/Rust commands）；**五步启动序列**：plugin 注册 → load 单例 → **serialize() 串行化** → 验证 foreign_keys → migrate → 就绪；**serialize 的原因（issue #10）**：plugin-sql 底层 sqlx 池默认多连接、无 busy_timeout，串行化逼池只建 1 条物理连接，手工 BEGIN/COMMIT 事务与 connection-local PRAGMA 才安全 |
 | 时间戳约定 | **UTC ISO-8601 入库**（字典序=时间序）；显示与月度归属按本地时区换算，换算函数在 rules.ts |
 | 迁移事务性 | 每个迁移单事务执行，user_version 同事务最后提交；失败整体回滚并阻止进入主界面 |
 | 订单号手改 | 手改仅校验非空+唯一；序号生成只统计符合 `^\d{8}-\d+$` 且日期段=创建日的编号 |
@@ -535,3 +535,5 @@ canonical_profit(order): ProfitResult
 | 历史数据 | 不做导入器，手动补录 |
 | 备份 | `VACUUM INTO` + 秒级时间戳命名 + **integrity_check 通过后才删旧**、保留 2 份 + 7 天提醒；文件操作走 fs plugin（scope 限备份目录）；**威胁模型：只防逻辑损坏，恢复为手动替换文件** |
 | 分发 | **GitHub CI 构建 + Releases 发布 dmg**（tauri-action，macos runner）；本地不装 Rust（权衡：无法本地 tauri dev，UI 靠 vite dev + mock）；无签名无自动更新，首次安装 `xattr -cr` 清 quarantine |
+| 测试策略（issue #10 后补强） | 三层：①vitest（better-sqlite3 内存库跑真实 migrate+约束，共享 `db/testUtils.ts`）；②jsdom 组件交互测试（Testing Library，**db 层不 mock** 用真库当 prop；StatsPage 除外——Recharts 不在 jsdom 渲染，其逻辑由 stats.test.ts 覆盖）；③E2E 仅 CI：`tauri-plugin-wdio-webdriver`（`cfg(debug_assertions)` 门控，release 零侵入）+ `@wdio/tauri-service` embedded provider，macOS runner debug 构建跑冒烟（含 #10 双回归）；`npm test` 恒为纯 vitest，E2E 走 `npm run test:e2e` |
+| plugin-sql 两个坑（issue #10） | ①guest-js `close(db?)` 传参数而非 this.path——无参 close 会关**全部**连接池，必须 `close(conn.path)`；②默认池多连接（见数据访问层行 serialize 决策） |
