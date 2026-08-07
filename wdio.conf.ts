@@ -12,6 +12,8 @@ export const config: WebdriverIO.Config = {
   logLevel: "warn",
   framework: "mocha",
   reporters: ["spec"],
+  // 嵌入式驱动 + service 钩子有额外延迟，默认 5s 等待太短
+  waitforTimeout: 15_000,
   services: [
     [
       "@wdio/tauri-service",
