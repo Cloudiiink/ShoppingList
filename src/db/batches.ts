@@ -54,7 +54,7 @@ export async function deleteBatch(db: SqlDb, id: number): Promise<void> {
   await withTransaction(db, async () => {
     await db.execute("UPDATE orders SET batch_id = NULL WHERE batch_id = ?", [id]);
     await db.execute("DELETE FROM batches WHERE id = ?", [id]);
-  });
+  }, "deleteBatch");
 }
 
 export async function listMembers(db: SqlDb, batchId: number): Promise<OrderRow[]> {
@@ -185,5 +185,5 @@ export async function allocateBatch(
       [nowUtc(), allocatedCheckout, allocatedRate, members.length, effectiveRate, newRate, batchId]
     );
     return { T, total };
-  });
+  }, "allocateBatch");
 }

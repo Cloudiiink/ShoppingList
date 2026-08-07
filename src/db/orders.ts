@@ -96,8 +96,7 @@ export async function createOrder(
 
   // BEGIN IMMEDIATE 内取当日最大序号 +1，UNIQUE 约束兜底；锁冲突自动重试（withTransaction）
   return withTransaction(db, async () => {
-    if (input.batch_id != null) {
-      await assertBatchMembership(db, input.batch_id, {
+    if (input.batch_id != null) {      await assertBatchMembership(db, input.batch_id, {
         site_id: input.site_id,
         cost_foreign_amount: input.cost_foreign_amount ?? null,
         cost_currency: input.cost_currency ?? null,
@@ -150,7 +149,7 @@ export async function createOrder(
       [orderNo]
     );
     return rows[0];
-  });
+  }, "createOrder");
 }
 
 async function upsertProduct(
@@ -342,7 +341,7 @@ export async function shipOrder(
       ["updated_at", now],
     ]);
     return getOrder(db, id);
-  });
+  }, "shipOrder");
 }
 
 /** adjustments 分组联想：返回历史出现过的全部分组名 */

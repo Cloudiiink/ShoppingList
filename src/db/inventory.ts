@@ -61,5 +61,5 @@ export async function convertStockToCustomer(
       ]
     );
     return getOrder(db, id);
-  });
+  }, "convertStock");
 }

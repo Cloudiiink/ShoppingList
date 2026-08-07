@@ -35,12 +35,14 @@ export const config: WebdriverIO.Config = {
     timeout: 120_000, // 首次启动 webview 较慢
     ui: "bdd",
   },
-  // 失败时 dump 页面文本，CI 无截图也能定位
+  // 失败时 dump 页面文本 + 事务日志，CI 无截图也能定位
   afterTest: async (_t, _c, { error }: { error?: Error }) => {
     if (!error) return;
     try {
       const text = await $("body").getText();
       console.log("[afterTest] BODY ON FAILURE:", JSON.stringify(text.slice(0, 500)));
+      const txn = await browser.execute(() => localStorage.getItem("ot-txn-log"));
+      console.log("[afterTest] TXN LOG:", txn);
     } catch {
       /* ignore */
     }

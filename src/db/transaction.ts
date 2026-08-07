@@ -23,6 +23,18 @@ const MAX_ATTEMPTS = 4;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 事务事件日志（环形，localStorage）：e2e afterTest 失败时转储，线上排障用 */
+export function txnLog(event: Record<string, unknown>): void {
+  try {
+    const log = JSON.parse(localStorage.getItem("ot-txn-log") ?? "[]") as unknown[];
+    log.push({ t: Date.now(), ...event });
+    while (log.length > 100) log.shift();
+    localStorage.setItem("ot-txn-log", JSON.stringify(log));
+  } catch {
+    /* 非浏览器环境（单测）静默 */
+  }
+}
+
 export function isLockError(e: unknown): boolean {
   const m = e instanceof Error ? e.message : String(e);
   return m.includes("database is locked") || m.includes("database table is locked");
@@ -35,15 +47,28 @@ function isRecoverableDbError(e: unknown): boolean {
 }
 
 /** 可恢复错误退避重放；持续失败触发池级恢复。fn 必须可整体重放 */
-export async function withLockRetry<T>(fn: () => Promise<T>): Promise<T> {
+export async function withLockRetry<T>(
+  fn: () => Promise<T>,
+  label = "txn"
+): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    txnLog({ label, event: "attempt:start", attempt });
     try {
       return await fn();
     } catch (e) {
       lastErr = e;
+      txnLog({
+        label,
+        attempt,
+        err: e instanceof Error ? e.message : String(e),
+      });
       if (!isRecoverableDbError(e)) throw e;
-      if (attempt === 2) await recoverPool();
+      if (attempt === 2) {
+        txnLog({ label, event: "recoverPool:enter" });
+        await recoverPool();
+        txnLog({ label, event: "recoverPool:exit" });
+      }
       if (attempt < MAX_ATTEMPTS) await sleep(150 * attempt);
     }
   }
@@ -53,7 +78,8 @@ export async function withLockRetry<T>(fn: () => Promise<T>): Promise<T> {
 /** 多语句事务：fn 内全部语句走同一 db（serialize 串行化保证单连接） */
 export async function withTransaction<T>(
   db: SqlDb,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  label?: string
 ): Promise<T> {
   return withLockRetry(async () => {
     await db.execute("BEGIN IMMEDIATE");
@@ -66,7 +92,7 @@ export async function withTransaction<T>(
       await db.execute("ROLLBACK").catch(() => {});
       throw e;
     }
-  });
+  }, label);
 }
 
 /**
