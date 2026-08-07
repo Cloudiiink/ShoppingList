@@ -51,6 +51,10 @@ describe("order-tracker 冒烟", () => {
         "[diag] BOOT LOG:",
         await browser.execute(() => localStorage.getItem("ot-boot-log"))
       );
+      console.log(
+        "[diag] BOOT STEPS:",
+        await browser.execute(() => localStorage.getItem("ot-boot-steps"))
+      );
     } catch (e) {
       console.log("[diag] boot log failed:", String(e));
     }
