@@ -45,11 +45,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function initDb(): Promise<SqlDb> {
   if (db) return db;
 
-  // Step 2: load 单例 + 串行化
-  const conn = serialize(await Database.load("sqlite:tracker.db"));
+  // Step 2: load（每次重试换全新池，见下）
+  let raw = await Database.load("sqlite:tracker.db");
 
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const conn = serialize(raw);
     try {
       // 清理上一上下文可能遗留的悬挂事务（见文件头注释）
       await conn.execute("ROLLBACK").catch(() => {});
@@ -76,7 +77,13 @@ export async function initDb(): Promise<SqlDb> {
         ok: false,
         err: e instanceof Error ? e.message : String(e),
       });
-      if (attempt < MAX_ATTEMPTS) await sleep(1000);
+      // 关键恢复手段：关闭当前池（释放其连接持有的全部锁/悬挂事务），
+      // 下次尝试用全新池的全新连接。锁源无论挂在池内哪条连接上都能自愈。
+      await raw.close("sqlite:tracker.db").catch(() => {});
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(1000);
+        raw = await Database.load("sqlite:tracker.db");
+      }
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));

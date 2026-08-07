@@ -112,7 +112,8 @@ export async function migrate(db: SqlDb): Promise<void> {
       await db.execute(`PRAGMA user_version = ${m.version}`);
       await db.execute("COMMIT");
     } catch (e) {
-      await db.execute("ROLLBACK");
+      // 尽力回滚：ROLLBACK 自身失败（如连接上已无事务）不能掩盖原始错误
+      await db.execute("ROLLBACK").catch(() => {});
       throw new Error(
         `迁移 v${m.version} (${m.name}) 失败，已回滚: ${e instanceof Error ? e.message : String(e)}`
       );
