@@ -35,6 +35,16 @@ export const config: WebdriverIO.Config = {
     timeout: 120_000, // 首次启动 webview 较慢
     ui: "bdd",
   },
+  // 失败时 dump 页面文本，CI 无截图也能定位
+  afterTest: async (_t, _c, { error }: { error?: Error }) => {
+    if (!error) return;
+    try {
+      const text = await $("body").getText();
+      console.log("[afterTest] BODY ON FAILURE:", JSON.stringify(text.slice(0, 500)));
+    } catch {
+      /* ignore */
+    }
+  },
   // 临时诊断：谁在持有数据库文件（排查 migrate 的 database is locked）
   before: async () => {
     const { execSync } = await import("node:child_process");

@@ -17,14 +17,13 @@ const byText = (tag: string, text: string) =>
 const byTextContains = (tag: string, text: string) =>
   `//${tag}[contains(normalize-space(),"${text}")]`;
 
-/** 项目表单无 htmlFor：按 label 文本找同容器内第一个表单控件 */
+/** 项目表单无 htmlFor：label 后文档序的第一个表单控件（单条 XPath，避免元素引用过期） */
 async function field(label: string) {
-  const l = await $(byText("label", label));
-  await l.waitForExist();
-  const parent = await l.parentElement();
-  const input = await parent.$("input, select, textarea");
-  if (!input) throw new Error(`label「${label}」同容器内没有表单控件`);
-  return input;
+  const el = await $(
+    `//label[normalize-space()="${label}"]/following::*[self::input or self::select or self::textarea][1]`
+  );
+  await el.waitForExist();
+  return el;
 }
 
 async function navTo(name: string) {
@@ -77,6 +76,7 @@ describe("order-tracker 冒烟", () => {
 
   it("设置页：添加网站", async () => {
     await navTo("设置");
+    await (await $(byText("h2", "网站管理"))).waitForExist();
     const input = await field("新网站名");
     await input.setValue(SITE);
     await (await $(byText("button", "添加"))).click();
@@ -85,6 +85,7 @@ describe("order-tracker 冒烟", () => {
 
   it("团页：开团", async () => {
     await navTo("团");
+    await (await $(byText("button", "新建团"))).waitForExist();
     await (await $(byText("button", "新建团"))).click();
     await (await field("团名 *")).setValue(BATCH);
     await (
