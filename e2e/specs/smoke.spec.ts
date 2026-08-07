@@ -26,6 +26,27 @@ async function field(label: string) {
   return el;
 }
 
+/**
+ * 原生 select 选值：嵌入式驱动的 click 是 JS el.click()，点在 <option> 上
+ * 不会改变选中值；直接设 value + 派发 change（React 受控组件可感知）。
+ */
+async function selectOption(label: string, text: string) {
+  const sel = await field(label);
+  await browser.execute(
+    (el: unknown, t: string) => {
+      const s = el as HTMLSelectElement;
+      const opt = Array.from(s.options).find(
+        (o) => (o.textContent ?? "").trim() === t
+      );
+      if (!opt) throw new Error(`option 不存在: ${t}`);
+      s.value = opt.value;
+      s.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    sel,
+    text
+  );
+}
+
 async function navTo(name: string) {
   const btn = await $(byText("button", name));
   await btn.waitForExist();
@@ -88,9 +109,7 @@ describe("order-tracker 冒烟", () => {
     await (await $(byText("button", "新建团"))).waitForExist();
     await (await $(byText("button", "新建团"))).click();
     await (await field("团名 *")).setValue(BATCH);
-    await (
-      await field("网站 *（一团一站，成员单必须同站）")
-    ).selectByVisibleText(SITE);
+    await selectOption("网站 *（一团一站，成员单必须同站）", SITE);
     await (await $(byText("button", "创建"))).click();
     await (await $(byText("td", BATCH))).waitForExist();
   });
