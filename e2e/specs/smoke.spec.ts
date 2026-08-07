@@ -39,6 +39,27 @@ async function expectNoClosedPool() {
 }
 
 describe("order-tracker 冒烟", () => {
+  it("诊断：页面加载状态", async () => {
+    await browser.pause(10_000);
+    try {
+      console.log("[diag] URL:", await browser.getUrl());
+    } catch (e) {
+      console.log("[diag] getUrl failed:", String(e));
+    }
+    try {
+      const body = await $("body");
+      console.log("[diag] BODY TEXT:", JSON.stringify(await body.getText()));
+    } catch (e) {
+      console.log("[diag] body getText failed:", String(e));
+    }
+    try {
+      const src = await browser.getPageSource();
+      console.log("[diag] SOURCE:", src.slice(0, 3000));
+    } catch (e) {
+      console.log("[diag] getPageSource failed:", String(e));
+    }
+  });
+
   it("启动：初始化完成、五个导航出现", async () => {
     await (await $(byTextContains("nav", "order-tracker"))).waitForExist({
       timeout: 60_000,
