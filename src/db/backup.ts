@@ -39,6 +39,8 @@ export async function checkSnapshot(absPath: string): Promise<void> {
       throw new Error(`快照完整性校验失败: ${rows[0]?.integrity_check}`);
     }
   } finally {
-    await conn.close();
+    // issue #10：plugin-sql guest-js 的 close(db?) 传的是参数而非 this.path；
+    // 无参调用会让 Rust 端关闭全部连接池（包括主库），必须显式传本连接串
+    await conn.close(conn.path);
   }
 }
