@@ -35,7 +35,8 @@ function makeFake() {
   return { inner, releaseOne, pending, order, maxInFlight: () => maxInFlight };
 }
 
-const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+// 5ms > serialize 的 1ms 语句间隙，确保下一语句已开始/完成
+const flush = () => new Promise<void>((r) => setTimeout(r, 5));
 
 describe("serialize（issue #10 Bug B）", () => {
   it("并发调用不重叠：maxInFlight 恒为 1", async () => {

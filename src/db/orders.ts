@@ -16,7 +16,7 @@ import {
 } from "./rules";
 import type { Adjustment } from "./rules";
 import { assertBatchMembership } from "./batches";
-import { withTransaction } from "./transaction";
+import { executeBatch } from "./transaction";
 
 /** 创建/编辑订单的输入 */
 export interface OrderInput {
@@ -94,79 +94,77 @@ export async function createOrder(
   const status: OrderStatus =
     input.order_type === "customer" ? "paid_pending_ship" : "in_stock";
 
-  // BEGIN IMMEDIATE 内取当日最大序号 +1，UNIQUE 约束兜底；锁冲突自动重试（withTransaction）
-  return withTransaction(db, async () => {
-    if (input.batch_id != null) {      await assertBatchMembership(db, input.batch_id, {
-        site_id: input.site_id,
-        cost_foreign_amount: input.cost_foreign_amount ?? null,
-        cost_currency: input.cost_currency ?? null,
-      });
-    }
-    const orderNo = await nextOrderNo(db);
-    const hasSettlement =
-      input.batch_id != null ||
-      input.cost_foreign_amount != null ||
-      input.buy_price_cny != null;
-    await db.execute(
-      `INSERT INTO orders (
+  // 入团校验只读，无需纳入事务
+  if (input.batch_id != null) {
+    await assertBatchMembership(db, input.batch_id, {
+      site_id: input.site_id,
+      cost_foreign_amount: input.cost_foreign_amount ?? null,
+      cost_currency: input.cost_currency ?? null,
+    });
+  }
+  // 单窗口 + serialize 串行写入，不会并发取号；UNIQUE(order_no) 兜底
+  const orderNo = await nextOrderNo(db);
+  const hasSettlement =
+    input.batch_id != null ||
+    input.cost_foreign_amount != null ||
+    input.buy_price_cny != null;
+
+  // 单 execute 多语句批量事务：INSERT 订单 + upsert 商品在一条连接上一次
+  // 完成，池连接轮转/释放迟滞无从拆散事务（根因见 transaction.ts 注释）
+  await executeBatch(
+    db,
+    `BEGIN IMMEDIATE;
+     INSERT INTO orders (
         order_no, order_type, status, batch_id, buyer_wechat, buyer_alias,
         region, product_name, product_note, site_id, reserved_at, ordered_at,
         tracking_no, cost_foreign_amount, cost_currency, exchange_rate,
         buy_price_cny, buy_price_source, sell_price_cny, shipping_fee,
         adjustments, note, created_at, updated_at, settlement_updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-      [
-        orderNo,
-        input.order_type,
-        status,
-        input.batch_id ?? null,
-        input.buyer_wechat ?? null,
-        input.buyer_alias ?? null,
-        input.region ?? null,
-        input.product_name,
-        input.product_note ?? null,
-        input.site_id,
-        input.reserved_at ?? null,
-        input.ordered_at ?? now,
-        input.tracking_no ?? null,
-        input.cost_foreign_amount ?? null,
-        input.cost_currency ?? null,
-        input.exchange_rate != null ? normRate(input.exchange_rate) : null,
-        input.buy_price_cny ?? null,
-        input.buy_price_source ?? "estimated",
-        input.sell_price_cny ?? null,
-        input.shipping_fee ?? null,
-        JSON.stringify(input.adjustments ?? []),
-        input.note ?? null,
-        now,
-        now,
-        hasSettlement ? now : null,
-      ]
-    );
-    await upsertProduct(db, input.product_name, input.site_id, input.buy_price_cny ?? null);
-    const rows = await db.select<OrderRow[]>(
-      "SELECT * FROM orders WHERE order_no = ?",
-      [orderNo]
-    );
-    return rows[0];
-  }, "createOrder");
-}
-
-async function upsertProduct(
-  db: SqlDb,
-  name: string,
-  siteId: number,
-  lastCost: number | null
-): Promise<void> {
-  await db.execute(
-    `INSERT INTO products (name, default_site_id, last_cost, use_count)
-     VALUES (?, ?, ?, 1)
-     ON CONFLICT(name) DO UPDATE SET
-       use_count = use_count + 1,
-       default_site_id = excluded.default_site_id,
-       last_cost = COALESCE(excluded.last_cost, products.last_cost)`,
-    [name, siteId, lastCost]
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+     INSERT INTO products (name, default_site_id, last_cost, use_count)
+      VALUES (?, ?, ?, 1)
+      ON CONFLICT(name) DO UPDATE SET
+        use_count = use_count + 1,
+        default_site_id = excluded.default_site_id,
+        last_cost = COALESCE(excluded.last_cost, products.last_cost);
+     COMMIT;`,
+    [
+      orderNo,
+      input.order_type,
+      status,
+      input.batch_id ?? null,
+      input.buyer_wechat ?? null,
+      input.buyer_alias ?? null,
+      input.region ?? null,
+      input.product_name,
+      input.product_note ?? null,
+      input.site_id,
+      input.reserved_at ?? null,
+      input.ordered_at ?? now,
+      input.tracking_no ?? null,
+      input.cost_foreign_amount ?? null,
+      input.cost_currency ?? null,
+      input.exchange_rate != null ? normRate(input.exchange_rate) : null,
+      input.buy_price_cny ?? null,
+      input.buy_price_source ?? "estimated",
+      input.sell_price_cny ?? null,
+      input.shipping_fee ?? null,
+      JSON.stringify(input.adjustments ?? []),
+      input.note ?? null,
+      now,
+      now,
+      hasSettlement ? now : null,
+      // products upsert 的绑定（sqlx 跨语句按顺序偏移绑定）
+      input.product_name,
+      input.site_id,
+      input.buy_price_cny ?? null,
+    ]
   );
+  const rows = await db.select<OrderRow[]>(
+    "SELECT * FROM orders WHERE order_no = ?",
+    [orderNo]
+  );
+  return rows[0];
 }
 
 export async function getOrder(db: SqlDb, id: number): Promise<OrderRow> {
@@ -332,16 +330,21 @@ export async function shipOrder(
     throw new Error("发货前必须填写买入价");
   }
   const now = nowUtc();
-  return withTransaction(db, async () => {
-    const patch = statusChangePatch(order, "shipped", now);
-    await runUpdate(db, id, [
-      ["tracking_no", shipping.tracking_no],
-      ["shipping_fee", shipping.shipping_fee],
-      ...Object.entries(patch),
-      ["updated_at", now],
-    ]);
-    return getOrder(db, id);
-  }, "shipOrder");
+  const patch = statusChangePatch(order, "shipped", now);
+  const fields: [string, unknown][] = [
+    ["tracking_no", shipping.tracking_no],
+    ["shipping_fee", shipping.shipping_fee],
+    ...Object.entries(patch),
+    ["updated_at", now],
+  ];
+  // 单 execute 批量事务（见 createOrder 注释）
+  const setClause = fields.map(([f]) => `${f} = ?`).join(", ");
+  await executeBatch(
+    db,
+    `BEGIN IMMEDIATE; UPDATE orders SET ${setClause} WHERE id = ?; COMMIT;`,
+    [...fields.map(([, v]) => v), id]
+  );
+  return getOrder(db, id);
 }
 
 /** adjustments 分组联想：返回历史出现过的全部分组名 */

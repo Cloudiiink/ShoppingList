@@ -2,7 +2,7 @@ import type { OrderRow, SqlDb } from "./types";
 import { getOrder } from "./orders";
 import { assertBatchMembership } from "./batches";
 import { canConvertStock, nowUtc } from "./rules";
-import { withTransaction } from "./transaction";
+import { executeBatch } from "./transaction";
 
 export interface ConvertInput {
   buyer_wechat: string;
@@ -34,32 +34,35 @@ export async function convertStockToCustomer(
   const sellPrice = input.sell_price_cny;
 
   const now = nowUtc();
-  return withTransaction(db, async () => {
-    if (input.batch_id != null) {
-      await assertBatchMembership(db, input.batch_id, {
-        site_id: order.site_id,
-        cost_foreign_amount: order.cost_foreign_amount,
-        cost_currency: order.cost_currency,
-      });
-    }
-    await db.execute(
-      `UPDATE orders SET
-        order_type = 'customer', status = 'paid_pending_ship',
-        buyer_wechat = ?, sell_price_cny = ?,
-        buyer_alias = COALESCE(?, buyer_alias), region = COALESCE(?, region),
-        batch_id = ?, closed_at = NULL, converted_from_stock_at = ?, updated_at = ?
-       WHERE id = ?`,
-      [
-        input.buyer_wechat.trim(),
-        sellPrice,
-        input.buyer_alias ?? null,
-        input.region ?? null,
-        input.batch_id ?? order.batch_id,
-        now,
-        now,
-        id,
-      ]
-    );
-    return getOrder(db, id);
-  }, "convertStock");
+  // 入团校验只读，无需纳入事务
+  if (input.batch_id != null) {
+    await assertBatchMembership(db, input.batch_id, {
+      site_id: order.site_id,
+      cost_foreign_amount: order.cost_foreign_amount,
+      cost_currency: order.cost_currency,
+    });
+  }
+  // 单 execute 批量事务（见 orders.ts createOrder 注释）
+  await executeBatch(
+    db,
+    `BEGIN IMMEDIATE;
+     UPDATE orders SET
+       order_type = 'customer', status = 'paid_pending_ship',
+       buyer_wechat = ?, sell_price_cny = ?,
+       buyer_alias = COALESCE(?, buyer_alias), region = COALESCE(?, region),
+       batch_id = ?, closed_at = NULL, converted_from_stock_at = ?, updated_at = ?
+     WHERE id = ?;
+     COMMIT;`,
+    [
+      input.buyer_wechat.trim(),
+      sellPrice,
+      input.buyer_alias ?? null,
+      input.region ?? null,
+      input.batch_id ?? order.batch_id,
+      now,
+      now,
+      id,
+    ]
+  );
+  return getOrder(db, id);
 }

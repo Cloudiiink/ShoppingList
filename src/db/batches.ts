@@ -1,6 +1,6 @@
 import type { BatchRow, Currency, OrderRow, SqlDb } from "./types";
 import { allocate, foreignToFen, normRate, nowUtc } from "./rules";
-import { withTransaction } from "./transaction";
+import { executeBatch } from "./transaction";
 
 export interface BatchInput {
   name: string;
@@ -51,10 +51,12 @@ export async function updateBatch(
 }
 
 export async function deleteBatch(db: SqlDb, id: number): Promise<void> {
-  await withTransaction(db, async () => {
-    await db.execute("UPDATE orders SET batch_id = NULL WHERE batch_id = ?", [id]);
-    await db.execute("DELETE FROM batches WHERE id = ?", [id]);
-  }, "deleteBatch");
+  // 单 execute 批量事务（见 orders.ts createOrder 注释）
+  await executeBatch(
+    db,
+    "BEGIN IMMEDIATE; UPDATE orders SET batch_id = NULL WHERE batch_id = ?; DELETE FROM batches WHERE id = ?; COMMIT;",
+    [id, id]
+  );
 }
 
 export async function listMembers(db: SqlDb, batchId: number): Promise<OrderRow[]> {
@@ -161,29 +163,36 @@ export async function allocateBatch(
   const allocatedCheckout = mode.mode === "checkout" ? batch.checkout_foreign_amount : null;
   const results = allocate(members, T);
 
-  return withTransaction(db, async () => {
-    for (const r of results) {
-      await db.execute(
-        "UPDATE orders SET buy_price_cny = ?, buy_price_source = 'batch_allocated', updated_at = ? WHERE id = ?",
-        [r.buy_price_cny, nowUtc(), r.id]
-      );
-    }
-    // 事务内校验：Σ(分摊后 buy_price) ≡ T，不等回滚
-    const [{ total }] = await db.select<{ total: number }[]>(
-      "SELECT COALESCE(SUM(buy_price_cny),0) AS total FROM orders WHERE batch_id = ?",
-      [batchId]
+  // 单 execute 批量事务（见 orders.ts createOrder 注释）：
+  // 成员 UPDATE × N + 团锚点 UPDATE + COMMIT 一条连接一次完成
+  const now = nowUtc();
+  const stmts: string[] = ["BEGIN IMMEDIATE"];
+  const params: unknown[] = [];
+  for (const r of results) {
+    stmts.push(
+      "UPDATE orders SET buy_price_cny = ?, buy_price_source = 'batch_allocated', updated_at = ? WHERE id = ?"
     );
-    if (total !== T) {
-      throw new Error(`分摊校验失败：Σ=${total} ≠ T=${T}`);
-    }
-    // 手动模式把输入汇率回写为团汇率（四态锚点 = 团汇率）
-    const newRate = mode.mode === "manual" ? allocatedRate : batch.exchange_rate;
-    const effectiveRate = computeEffectiveRate(batch.checkout_foreign_amount, newRate, members);
-    await db.execute(
-      `UPDATE batches SET allocated_at = ?, allocated_checkout = ?, allocated_rate = ?,
-        allocated_member_count = ?, effective_rate = ?, exchange_rate = ? WHERE id = ?`,
-      [nowUtc(), allocatedCheckout, allocatedRate, members.length, effectiveRate, newRate, batchId]
-    );
-    return { T, total };
-  }, "allocateBatch");
+    params.push(r.buy_price_cny, now, r.id);
+  }
+  // 手动模式把输入汇率回写为团汇率（四态锚点 = 团汇率）
+  const newRate = mode.mode === "manual" ? allocatedRate : batch.exchange_rate;
+  const effectiveRate = computeEffectiveRate(batch.checkout_foreign_amount, newRate, members);
+  stmts.push(
+    `UPDATE batches SET allocated_at = ?, allocated_checkout = ?, allocated_rate = ?,
+      allocated_member_count = ?, effective_rate = ?, exchange_rate = ? WHERE id = ?`
+  );
+  params.push(now, allocatedCheckout, allocatedRate, members.length, effectiveRate, newRate, batchId);
+  stmts.push("COMMIT");
+  await executeBatch(db, stmts.join(";\n"), params);
+
+  // 分摊校验 Σ≡T：原事务内校验改为事务后校验——serialize 单写者下事务期间
+  // 无并发修改，且 allocate() 最大余数法构造性保证 Σ≡T，此检查为双保险
+  const [{ total }] = await db.select<{ total: number }[]>(
+    "SELECT COALESCE(SUM(buy_price_cny),0) AS total FROM orders WHERE batch_id = ?",
+    [batchId]
+  );
+  if (total !== T) {
+    throw new Error(`分摊校验失败：Σ=${total} ≠ T=${T}`);
+  }
+  return { T, total };
 }

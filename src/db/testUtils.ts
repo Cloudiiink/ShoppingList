@@ -6,13 +6,27 @@ import type { SqlDb } from "./types";
 export function wrap(raw: Database.Database): SqlDb {
   return {
     execute: async (sql, params = []) => {
-      // 多语句批量（executeBatch，无绑定参数）走 exec；与 sqlx 的多语句迭代对齐
+      // 多语句批量（executeBatch）：与 sqlx 的单连接多语句迭代对齐。
+      // 我们的批量 SQL 是静态文本——";" 不会出现在字符串字面量里，
+      // "?" 只会是占位符，因此可以安全拆分并按顺序偏移绑定。
       const hasMultiple = sql.trim().replace(/;+\s*$/, "").includes(";");
-      if (hasMultiple && params.length === 0) {
+      if (!hasMultiple) return raw.prepare(sql).run(...(params as never[]));
+      if (params.length === 0) {
         raw.exec(sql);
         return { rowsAffected: 0, lastInsertId: 0 };
       }
-      return raw.prepare(sql).run(...(params as never[]));
+      let offset = 0;
+      for (const stmt of sql.split(";")) {
+        const trimmed = stmt.trim();
+        if (!trimmed) continue;
+        const n = (trimmed.match(/\?/g) ?? []).length;
+        raw.prepare(trimmed).run(...(params.slice(offset, offset + n) as never[]));
+        offset += n;
+      }
+      if (offset !== params.length) {
+        throw new Error(`批量语句绑定数不匹配：用了 ${offset}，给了 ${params.length}`);
+      }
+      return { rowsAffected: 0, lastInsertId: 0 };
     },
     select: async <T,>(sql: string, params: unknown[] = []) =>
       raw.prepare(sql).all(...(params as never[])) as T,
