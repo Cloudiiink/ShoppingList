@@ -33,4 +33,22 @@ export const config: WebdriverIO.Config = {
     timeout: 120_000, // 首次启动 webview 较慢
     ui: "bdd",
   },
+  // 临时诊断：谁在持有数据库文件（排查 migrate 的 database is locked）
+  before: async () => {
+    const { execSync } = await import("node:child_process");
+    const dir = `${process.env.HOME}/Library/Application Support/com.cloudiiink.ordertracker`;
+    const run = (cmd: string) => {
+      try {
+        return execSync(cmd).toString();
+      } catch {
+        return "(none)";
+      }
+    };
+    console.log("[diag-ps]", run("ps aux | grep '[o]rder-tracker'"));
+    console.log("[diag-ls]", run(`ls -la '${dir}'`));
+    console.log(
+      "[diag-lsof]",
+      run(`lsof '${dir}/tracker.db' '${dir}/tracker.db-wal' '${dir}/tracker.db-shm' 2>/dev/null`)
+    );
+  },
 };
