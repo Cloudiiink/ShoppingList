@@ -1,5 +1,10 @@
 import type { SqlDb } from "./types";
 
+/** 支持池级恢复（recoverPool 换新连接后切换 inner）的串行化 SqlDb */
+export interface SerializedDb extends SqlDb {
+  swapInner(next: SqlDb): void;
+}
+
 /**
  * 串行化适配器（issue #10 Bug B）：promise-chain 互斥锁包住 SqlDb。
  *
@@ -10,7 +15,8 @@ import type { SqlDb } from "./types";
  *
  * select 也必须排队：VACUUM INTO / BEGIN IMMEDIATE 与并发 select 同样会抢连接。
  */
-export function serialize(inner: SqlDb): SqlDb {
+export function serialize(initial: SqlDb): SerializedDb {
+  let inner = initial;
   let tail: Promise<void> = Promise.resolve();
   const enqueue = <T>(fn: () => Promise<T>): Promise<T> => {
     const result = tail.then(fn);
@@ -25,5 +31,9 @@ export function serialize(inner: SqlDb): SqlDb {
     execute: (sql, params) => enqueue(() => inner.execute(sql, params)),
     select: <T,>(sql: string, params?: unknown[]) =>
       enqueue(() => inner.select<T>(sql, params)),
+    // 仅在无在飞语句时调用（withTransaction 的恢复路径满足此约束）
+    swapInner(next: SqlDb) {
+      inner = next;
+    },
   };
 }

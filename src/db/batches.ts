@@ -1,5 +1,6 @@
 import type { BatchRow, Currency, OrderRow, SqlDb } from "./types";
 import { allocate, foreignToFen, normRate, nowUtc } from "./rules";
+import { withTransaction } from "./transaction";
 
 export interface BatchInput {
   name: string;
@@ -50,15 +51,10 @@ export async function updateBatch(
 }
 
 export async function deleteBatch(db: SqlDb, id: number): Promise<void> {
-  await db.execute("BEGIN IMMEDIATE");
-  try {
+  await withTransaction(db, async () => {
     await db.execute("UPDATE orders SET batch_id = NULL WHERE batch_id = ?", [id]);
     await db.execute("DELETE FROM batches WHERE id = ?", [id]);
-    await db.execute("COMMIT");
-  } catch (e) {
-    await db.execute("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 export async function listMembers(db: SqlDb, batchId: number): Promise<OrderRow[]> {
@@ -165,8 +161,7 @@ export async function allocateBatch(
   const allocatedCheckout = mode.mode === "checkout" ? batch.checkout_foreign_amount : null;
   const results = allocate(members, T);
 
-  await db.execute("BEGIN IMMEDIATE");
-  try {
+  return withTransaction(db, async () => {
     for (const r of results) {
       await db.execute(
         "UPDATE orders SET buy_price_cny = ?, buy_price_source = 'batch_allocated', updated_at = ? WHERE id = ?",
@@ -189,10 +184,6 @@ export async function allocateBatch(
         allocated_member_count = ?, effective_rate = ?, exchange_rate = ? WHERE id = ?`,
       [nowUtc(), allocatedCheckout, allocatedRate, members.length, effectiveRate, newRate, batchId]
     );
-    await db.execute("COMMIT");
     return { T, total };
-  } catch (e) {
-    await db.execute("ROLLBACK");
-    throw e;
-  }
+  });
 }

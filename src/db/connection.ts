@@ -1,6 +1,7 @@
 import Database from "@tauri-apps/plugin-sql";
 import { migrate } from "./migrate";
-import { serialize } from "./serialize";
+import { registerRecoverer } from "./recovery";
+import { serialize, type SerializedDb } from "./serialize";
 import type { SqlDb } from "./types";
 
 /**
@@ -24,8 +25,18 @@ import type { SqlDb } from "./types";
  */
 
 let db: SqlDb | null = null;
+let serialized: SerializedDb | null = null;
+let raw: Database | null = null;
 
 const MAX_ATTEMPTS = 5;
+const DB_KEY = "sqlite:tracker.db";
+
+/** 关池重建：释放池连接持有的一切锁/悬挂事务，并切换串行化外壳的 inner */
+async function recoverPool(): Promise<void> {
+  if (raw) await raw.close(DB_KEY).catch(() => {});
+  raw = await Database.load(DB_KEY);
+  serialized?.swapInner(raw);
+}
 
 /** [临时诊断] 启动步骤落 localStorage，e2e 可读（UI 失败页无法展示细节） */
 function bootLog(entry: Record<string, unknown>): void {
@@ -45,8 +56,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function initDb(): Promise<SqlDb> {
   if (db) return db;
 
-  // Step 2: load（每次重试换全新池，见下）
-  let raw = await Database.load("sqlite:tracker.db");
+  // Step 2: load（每次重试换全新池，见 recoverPool）
+  raw = await Database.load(DB_KEY);
 
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -68,7 +79,11 @@ export async function initDb(): Promise<SqlDb> {
       await migrate(conn);
 
       bootLog({ attempt, ok: true });
+      serialized = conn;
       db = conn;
+      // 启动完成后才注册池恢复：启动期由本函数自身的重试循环负责，
+      // 避免 withTransaction 在启动中途换池导致外壳指向已关闭的旧池
+      registerRecoverer(recoverPool);
       return conn;
     } catch (e) {
       lastErr = e;
@@ -79,10 +94,10 @@ export async function initDb(): Promise<SqlDb> {
       });
       // 关键恢复手段：关闭当前池（释放其连接持有的全部锁/悬挂事务），
       // 下次尝试用全新池的全新连接。锁源无论挂在池内哪条连接上都能自愈。
-      await raw.close("sqlite:tracker.db").catch(() => {});
+      await raw.close(DB_KEY).catch(() => {});
       if (attempt < MAX_ATTEMPTS) {
         await sleep(1000);
-        raw = await Database.load("sqlite:tracker.db");
+        raw = await Database.load(DB_KEY);
       }
     }
   }

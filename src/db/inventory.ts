@@ -2,6 +2,7 @@ import type { OrderRow, SqlDb } from "./types";
 import { getOrder } from "./orders";
 import { assertBatchMembership } from "./batches";
 import { canConvertStock, nowUtc } from "./rules";
+import { withTransaction } from "./transaction";
 
 export interface ConvertInput {
   buyer_wechat: string;
@@ -33,8 +34,7 @@ export async function convertStockToCustomer(
   const sellPrice = input.sell_price_cny;
 
   const now = nowUtc();
-  await db.execute("BEGIN IMMEDIATE");
-  try {
+  return withTransaction(db, async () => {
     if (input.batch_id != null) {
       await assertBatchMembership(db, input.batch_id, {
         site_id: order.site_id,
@@ -60,10 +60,6 @@ export async function convertStockToCustomer(
         id,
       ]
     );
-    await db.execute("COMMIT");
-  } catch (e) {
-    await db.execute("ROLLBACK");
-    throw e;
-  }
-  return getOrder(db, id);
+    return getOrder(db, id);
+  });
 }

@@ -16,6 +16,7 @@ import {
 } from "./rules";
 import type { Adjustment } from "./rules";
 import { assertBatchMembership } from "./batches";
+import { withTransaction } from "./transaction";
 
 /** 创建/编辑订单的输入 */
 export interface OrderInput {
@@ -93,9 +94,8 @@ export async function createOrder(
   const status: OrderStatus =
     input.order_type === "customer" ? "paid_pending_ship" : "in_stock";
 
-  // BEGIN IMMEDIATE 内取当日最大序号 +1，UNIQUE 约束兜底
-  await db.execute("BEGIN IMMEDIATE");
-  try {
+  // BEGIN IMMEDIATE 内取当日最大序号 +1，UNIQUE 约束兜底；锁冲突自动重试（withTransaction）
+  return withTransaction(db, async () => {
     if (input.batch_id != null) {
       await assertBatchMembership(db, input.batch_id, {
         site_id: input.site_id,
@@ -145,16 +145,12 @@ export async function createOrder(
       ]
     );
     await upsertProduct(db, input.product_name, input.site_id, input.buy_price_cny ?? null);
-    await db.execute("COMMIT");
     const rows = await db.select<OrderRow[]>(
       "SELECT * FROM orders WHERE order_no = ?",
       [orderNo]
     );
     return rows[0];
-  } catch (e) {
-    await db.execute("ROLLBACK");
-    throw e;
-  }
+  });
 }
 
 async function upsertProduct(
@@ -337,8 +333,7 @@ export async function shipOrder(
     throw new Error("发货前必须填写买入价");
   }
   const now = nowUtc();
-  await db.execute("BEGIN IMMEDIATE");
-  try {
+  return withTransaction(db, async () => {
     const patch = statusChangePatch(order, "shipped", now);
     await runUpdate(db, id, [
       ["tracking_no", shipping.tracking_no],
@@ -346,12 +341,8 @@ export async function shipOrder(
       ...Object.entries(patch),
       ["updated_at", now],
     ]);
-    await db.execute("COMMIT");
-  } catch (e) {
-    await db.execute("ROLLBACK");
-    throw e;
-  }
-  return getOrder(db, id);
+    return getOrder(db, id);
+  });
 }
 
 /** adjustments 分组联想：返回历史出现过的全部分组名 */

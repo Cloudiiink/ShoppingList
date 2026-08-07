@@ -1,4 +1,5 @@
 import type { SqlDb } from "./types";
+import { withTransaction } from "./transaction";
 
 /**
  * user_version 顺序迁移（设计文档 §3.5）：
@@ -103,17 +104,15 @@ export async function migrate(db: SqlDb): Promise<void> {
   );
 
   for (const m of pending) {
-    await db.execute("BEGIN IMMEDIATE");
     try {
-      for (const stmt of m.statements) {
-        await db.execute(stmt);
-      }
-      // user_version 同事务最后一步提交：失败则整体回滚，不留半迁移状态
-      await db.execute(`PRAGMA user_version = ${m.version}`);
-      await db.execute("COMMIT");
+      await withTransaction(db, async () => {
+        for (const stmt of m.statements) {
+          await db.execute(stmt);
+        }
+        // user_version 同事务最后一步提交：失败则整体回滚，不留半迁移状态
+        await db.execute(`PRAGMA user_version = ${m.version}`);
+      });
     } catch (e) {
-      // 尽力回滚：ROLLBACK 自身失败（如连接上已无事务）不能掩盖原始错误
-      await db.execute("ROLLBACK").catch(() => {});
       throw new Error(
         `迁移 v${m.version} (${m.name}) 失败，已回滚: ${e instanceof Error ? e.message : String(e)}`
       );
