@@ -1,5 +1,5 @@
 import type { SqlDb } from "./types";
-import { withTransaction } from "./transaction";
+import { executeBatch } from "./transaction";
 
 /**
  * user_version 顺序迁移（设计文档 §3.5）：
@@ -105,13 +105,15 @@ export async function migrate(db: SqlDb): Promise<void> {
 
   for (const m of pending) {
     try {
-      await withTransaction(db, async () => {
-        for (const stmt of m.statements) {
-          await db.execute(stmt);
-        }
-        // user_version 同事务最后一步提交：失败则整体回滚，不留半迁移状态
-        await db.execute(`PRAGMA user_version = ${m.version}`);
-      });
+      // 整个迁移打成一条多语句 execute：单连接原子执行（sqlx 多语句迭代），
+      // 池连接轮转/释放迟滞都无从发生；user_version 同事务最后一步
+      const batch = [
+        "BEGIN IMMEDIATE",
+        ...m.statements,
+        `PRAGMA user_version = ${m.version}`,
+        "COMMIT",
+      ].join(";\n");
+      await executeBatch(db, batch);
     } catch (e) {
       throw new Error(
         `迁移 v${m.version} (${m.name}) 失败，已回滚: ${e instanceof Error ? e.message : String(e)}`

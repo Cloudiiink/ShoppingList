@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { isLockError, withTransaction } from "./transaction";
+import { executeBatch, isLockError, withTransaction } from "./transaction";
 import { registerRecoverer } from "./recovery";
 import { freshDb } from "./testUtils";
 import type { SqlDb } from "./types";
@@ -88,5 +88,42 @@ describe("withTransaction", () => {
         throw new Error("原始业务错误");
       })
     ).rejects.toThrow("原始业务错误");
+  });
+
+  it("「cannot start a transaction」（悬挂事务）视为可恢复错误并重放", async () => {
+    const db = await freshDb();
+    let calls = 0;
+    const result = await withTransaction(db, async () => {
+      calls++;
+      if (calls === 1) throw new Error("cannot start a transaction within a transaction");
+      return "ok";
+    });
+    expect(result).toBe("ok");
+    expect(calls).toBe(2);
+  });
+});
+
+describe("executeBatch", () => {
+  it("多语句批处理：全部语句原子生效", async () => {
+    const db = await freshDb();
+    await executeBatch(
+      db,
+      "BEGIN IMMEDIATE; INSERT INTO sites (name) VALUES ('A'); INSERT INTO sites (name) VALUES ('B'); COMMIT;"
+    );
+    const rows = await db.select<{ name: string }[]>(
+      "SELECT name FROM sites ORDER BY name"
+    );
+    expect(rows.map((r) => r.name)).toEqual(["A", "B"]);
+  });
+
+  it("批处理中途失败：尽力回滚，不落部分写入", async () => {
+    const db = await freshDb();
+    await expect(
+      executeBatch(
+        db,
+        "BEGIN IMMEDIATE; INSERT INTO sites (name) VALUES ('A'); INSERT INTO sites (name) VALUES ('A'); COMMIT;"
+      )
+    ).rejects.toThrow(); // UNIQUE 冲突
+    expect(await db.select("SELECT COUNT(*) AS c FROM sites")).toEqual([{ c: 0 }]);
   });
 });

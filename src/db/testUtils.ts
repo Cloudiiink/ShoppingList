@@ -5,7 +5,15 @@ import type { SqlDb } from "./types";
 /** better-sqlite3 包装成 SqlDb 接口（测试专用） */
 export function wrap(raw: Database.Database): SqlDb {
   return {
-    execute: async (sql, params = []) => raw.prepare(sql).run(...(params as never[])),
+    execute: async (sql, params = []) => {
+      // 多语句批量（executeBatch，无绑定参数）走 exec；与 sqlx 的多语句迭代对齐
+      const hasMultiple = sql.trim().replace(/;+\s*$/, "").includes(";");
+      if (hasMultiple && params.length === 0) {
+        raw.exec(sql);
+        return { rowsAffected: 0, lastInsertId: 0 };
+      }
+      return raw.prepare(sql).run(...(params as never[]));
+    },
     select: async <T,>(sql: string, params: unknown[] = []) =>
       raw.prepare(sql).all(...(params as never[])) as T,
   };
