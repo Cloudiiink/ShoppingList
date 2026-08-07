@@ -28,3 +28,4 @@ jobs:
           releaseName: "order-tracker ${{ github.ref_name }}"
           releaseDraft: false
           prerelease: false
+          args: --target universal-apple-darwin
