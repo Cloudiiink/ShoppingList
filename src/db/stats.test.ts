@@ -92,13 +92,16 @@ describe("卡片数据", () => {
     expect(r.oldestDays).toBeGreaterThanOrEqual(9);
   });
 
-  it("stockHolding：in_stock/listed 成本与件数", () => {
+  it("stockHolding：in_stock/listed 完整成本（fullCost，含运费与成本调整）与件数", () => {
     const rows = [
-      order({ id: 1, order_type: "stock", status: "in_stock", buy_price_cny: 2000 }),
-      order({ id: 2, order_type: "stock", status: "listed", buy_price_cny: 3000 }),
+      order({ id: 1, order_type: "stock", status: "in_stock", buy_price_cny: 2000, shipping_fee: 500 }),
+      order({
+        id: 2, order_type: "stock", status: "listed", buy_price_cny: 3000,
+        adjustments: JSON.stringify([{ kind: "cost", group: "关税", amount: 300 }]),
+      }),
       order({ id: 3, order_type: "stock", status: "consumed", buy_price_cny: 9000 }),
     ];
-    expect(stockHolding(rows)).toEqual({ cost: 5000, count: 2 });
+    expect(stockHolding(rows)).toEqual({ cost: 5800, count: 2 });
   });
 
   it("unsettledBatchCount：非 allocated 且非空的团", () => {

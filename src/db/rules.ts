@@ -147,7 +147,11 @@ function sumByKind(adj: Adjustment[], kind: Adjustment["kind"]): number {
   return adj.filter((a) => a.kind === kind).reduce((s, a) => s + a.amount, 0);
 }
 
-function fullCost(order: OrderRow): number {
+/**
+ * 完整成本口径 = buy_price_cny + shipping_fee + Σcost调整。
+ * 收益计算、库存估值、未售库存占用的唯一实现（issue #11）。
+ */
+export function fullCost(order: OrderRow): number {
   const costAdj = sumByKind(parseAdjustments(order.adjustments), "cost");
   return (
     (order.buy_price_cny ?? 0) + (order.shipping_fee ?? 0) + costAdj

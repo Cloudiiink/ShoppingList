@@ -15,7 +15,7 @@ import {
   statusChangePatch,
 } from "./rules";
 import type { Adjustment } from "./rules";
-import { assertBatchMembership } from "./batches";
+import { assertBatchMembership, getBatch } from "./batches";
 import { executeBatch } from "./transaction";
 
 /** 创建/编辑订单的输入 */
@@ -171,6 +171,58 @@ export async function getOrder(db: SqlDb, id: number): Promise<OrderRow> {
   const rows = await db.select<OrderRow[]>("SELECT * FROM orders WHERE id = ?", [id]);
   if (!rows[0]) throw new Error(`订单 #${id} 不存在`);
   return rows[0];
+}
+
+/** 一键复制份数上限（CopyOrderDialog 与 db 层共用） */
+export const MAX_COPY_COUNT = 20;
+
+/**
+ * 一键复制（issue #11）：用源单的商品/成本信息建 count 条新囤货单（stock/in_stock）。
+ * customer 单复制即转囤货单。逐条走 createOrder，继承全部校验/CHECK/入团闸/连号。
+ * 注意：逐条独立事务，**非原子**——中途失败会留下已创建的部分副本（份数 ≤20，风险可接受）。
+ * 清空：买家四件套、卖出价、运费、快递单号；adjustments 只留 kind=cost；
+ * batch_id 仅团未结算才保留（batch_allocated 必已结算 → 降级 manual 并记散单）。
+ */
+export async function copyOrdersAsStock(
+  db: SqlDb,
+  sourceId: number,
+  count: number
+): Promise<OrderRow[]> {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_COPY_COUNT) {
+    throw new Error(`份数必须是 1-${MAX_COPY_COUNT} 的整数`);
+  }
+  const src = await getOrder(db, sourceId);
+  if (src.buy_price_cny === null) {
+    throw new Error("该单尚未补成本，无法复制为囤货单，请先补成本");
+  }
+
+  let batchId: number | null = null;
+  if (src.batch_id !== null) {
+    const b = await getBatch(db, src.batch_id);
+    if (b.exchange_rate === null) batchId = b.id; // 未结算才保留
+  }
+
+  const input: OrderInput = {
+    order_type: "stock",
+    product_name: src.product_name,
+    product_note: src.product_note,
+    site_id: src.site_id,
+    batch_id: batchId,
+    reserved_at: src.reserved_at,
+    cost_foreign_amount: src.cost_foreign_amount,
+    cost_currency: src.cost_currency,
+    exchange_rate: src.exchange_rate,
+    buy_price_cny: src.buy_price_cny,
+    buy_price_source: src.buy_price_source === "batch_allocated" ? "manual" : src.buy_price_source,
+    adjustments: parseAdjustments(src.adjustments).filter((a) => a.kind === "cost"),
+    note: src.note,
+  };
+
+  const out: OrderRow[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push(await createOrder(db, input));
+  }
+  return out;
 }
 
 export interface OrderFilter {

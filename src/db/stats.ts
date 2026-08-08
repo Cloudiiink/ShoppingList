@@ -1,5 +1,5 @@
 import type { BatchRow, OrderRow } from "./types";
-import { canonicalProfit, settlementState, utcToLocalMonth } from "./rules";
+import { canonicalProfit, fullCost, settlementState, utcToLocalMonth } from "./rules";
 
 /** 统计聚合（§6.4）：纯函数，输入全量订单/团，输出图表与卡片数据 */
 
@@ -93,13 +93,13 @@ export function pendingShipInfo(orders: OrderRow[]): { count: number; oldestDays
   return { count: pending.length, oldestDays };
 }
 
-/** 库存占用卡片：in_stock/listed 成本与件数 */
+/** 库存占用卡片：in_stock/listed 完整成本（fullCost，含运费与成本调整）与件数 */
 export function stockHolding(orders: OrderRow[]): { cost: number; count: number } {
   const held = orders.filter(
     (o) => o.order_type === "stock" && (o.status === "in_stock" || o.status === "listed")
   );
   return {
-    cost: held.reduce((s, o) => s + (o.buy_price_cny ?? 0), 0),
+    cost: held.reduce((s, o) => s + fullCost(o), 0),
     count: held.length,
   };
 }

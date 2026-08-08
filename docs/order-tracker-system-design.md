@@ -158,17 +158,18 @@ UI 组件中禁止出现任何 SQL 字符串，一切读写经过 `db/` 模块�
 | 已分摊 | allocated_rate == 当前团汇率，且（allocated_checkout 非空时 allocated_checkout == 当前 checkout），且成员无结算相关变更（见下） | 「已分摊」（订单/月度数字 = 实际） |
 | 分摊过期 | 上述任一条不满足，或任一成员 `settlement_updated_at > allocated_at`（结算字段被改），或当前成员数 ≠ `allocated_member_count`（成员增减） | 「待重新分摊」（橙色提示） |
 
-### 3.3 `products` / `sites`
+### 3.3 `products` / `sites` / `rates`
 
 - **products**：id、name UNIQUE、default_site_id → sites.id、last_cost（分）、use_count
 - **sites**：id、name UNIQUE、color；被引用时禁止删除（RESTRICT）
+- **rates**（v2 新增，issue #11）：currency PK（CHECK 同币种枚举）、rate REAL（normRate 归一化）、updated_at；固定 3 行语义——币种仍是写死枚举，新增币种走代码变更
 
 ### 3.4 索引
 
 | 表 | 索引 |
 |---|---|
 | orders | (status)、(shipped_at)、(batch_id)、(order_type, status)、(site_id) |
-| batches / products / sites | 无额外索引 |
+| batches / products / sites / rates | 无额外索引 |
 
 > UNIQUE(order_no) / UNIQUE(name) 由列级 UNIQUE 约束自动建索引，不再重复声明。
 
@@ -262,6 +263,13 @@ CREATE INDEX idx_orders_shipped_at  ON orders(shipped_at);
 CREATE INDEX idx_orders_batch_id    ON orders(batch_id);
 CREATE INDEX idx_orders_type_status ON orders(order_type, status);
 CREATE INDEX idx_orders_site_id     ON orders(site_id);
+
+-- v2 迁移新增（issue #11）
+CREATE TABLE rates (
+  currency   TEXT PRIMARY KEY CHECK (currency IN ('AUD','USD','HKD')),
+  rate       REAL NOT NULL CHECK (rate > 0),  -- normRate() 归一化后入库
+  updated_at TEXT NOT NULL
+) STRICT;
 ```
 
 **校验双闸分工**：DB（DDL/CHECK）管结构存在性（非空、枚举、同空同填、JSON 形状、STRICT 类型）；rules.ts 管语义（转移矩阵、状态门槛如转 shipped/lost 前 buy_price 必填、金额运算）。db/ 模块所有写入口统一过 `validateOrder()`，与 DB 约束同规则但不互相替代。
@@ -416,7 +424,7 @@ canonical_profit(order): ProfitResult
 | 行 | 内容 |
 |---|---|
 | 团成本 | Σ 成员 buy_price（未分摊=预估；已分摊=实际=T） |
-| 未售库存占用 | Σ in_stock/listed 囤货单的 buy_price（资金占用，非损益） |
+| 未售库存占用 | Σ in_stock/listed 囤货单的 fullCost（buy_price + 运费 + Σcost调整；资金占用，非损益） |
 | **团收益** | **Σ canonical_profit(全部成员)**——无独立公式，与订单/月度同源 |
 
 结算差额（Σ成员外币成本 − checkout_foreign，整数精确比较）仍展示，作为录单防呆高亮；等效汇率 effective_rate 展示在结算区（如「等效 4.71 vs 信用卡 4.82」）。
@@ -432,12 +440,13 @@ canonical_profit(order): ProfitResult
 - **默认视图** = 全部进行中单（paid_pending_ship + shipped，含散单）∪ **最新活跃团**（最新创建且仍有进行中订单的团）的全部订单；按订单 id 去重；无活跃团时退化为仅进行中单
 - 筛选栏：视图切换（默认视图 / 指定团 / 全部 / 单状态）、买家、商品、网站、订单号；状态筛选默认「进行中」
 - 提醒条：「有 N 条订单未填邮费」（**仅统计进行中单**）
-- 行尾操作：编辑、标记发货、完结、退款、丢失、转售出（囤货单）、删除
+- 行尾操作：编辑、标记发货、完结、退款、丢失、转售出（囤货单）、**复制**、删除
 - **标记发货弹窗**：快递单号（可空）+ 邮费 → 确认写 `shipped_at` + `tracking_no`（前置硬校验 buy_price 已填）
+- **一键复制（issue #11）**：订单页/库存页行内「复制」→ 弹窗输份数（默认 1，上限 20）→ 用源单商品/成本信息建 N 条新囤货单（stock/in_stock，各自新订单号）；customer 单复制即转囤货单。保留：商品/网站/买入价/外币/汇率/成本侧 adjustments/备注；清空：买家四件套/卖出价/运费/快递单号/履约时间戳；batch_id 仅团未结算才保留（batch_allocated 降级 manual）；源单缺 buy_price_cny 禁止复制并提示先补成本；实现复用 `createOrder` 逐条创建（继承全部校验与连号）
 - 新建/编辑表单：
   - 批次下拉（可空 = 散单）；从团详情「+ 加订单」进入时自动带 batch_id / site / 币种锁定；挂散单入团校验 site 与币种一致
   - 状态下拉只列转移矩阵中的合法目标
-  - 汇率区：外币金额 + 币种 + 汇率（「获取实时汇率」按钮）→ 脏标记联动预填 buy_price_cny；manual 单显示「已手动修改」
+  - 汇率区：外币金额 + 币种 + 汇率（新建单按币种从 `rates` 表静默预填，「获取实时汇率」按钮兜底）→ 脏标记联动预填 buy_price_cny；manual 单显示「已手动修改」
   - **adjustments 编辑器**：动态行（kind 切换 成本/收入，默认成本 + 分组联想历史值 + 金额可负 + 备注），负数行绿色，底部实时合计；分组+金额必填，空行提交时丢弃
   - 商品名联想 → 选中带出网站和上次成本（products upsert）
   - 必填：代购 = 买家微信 + 网站 + 商品名 + 下单时间 + 卖出价；囤货 = 网站 + 商品名 + 下单时间 + 买入价
@@ -451,18 +460,19 @@ canonical_profit(order): ProfitResult
 ### 6.3 库存页
 
 - 显示 `stock` 单：in_stock 紫 / listed 浅紫
-- 统计：库存总成本、件数
+- 统计：库存总成本（fullCost 口径：buy_price + 运费 + Σcost调整）、件数
 - **转为售出**：合法来源 = `in_stock` / `listed` / `consumed`（自用后又卖掉的真实场景）；`lost` 不可转（找回需先按矩阵回退 in_stock）。弹补填表单（买家微信 + 卖出价必填，alias/region/batch 可改，成本与购买日锁定）；提交单事务：清 `closed_at`（consumed 时有值）→ `order_type→customer`、`status→paid_pending_ship`、写 `converted_from_stock_at`
 
 ### 6.4 统计页
 
-- **卡片 ×4**：本月收益（canonical_profit，按 shipped_at 月，含 incomplete 提示）、待发货（附最早等待天数）、库存占用（成本+件数）、未结算团数
+- **卡片 ×4**：本月收益（canonical_profit，按 shipped_at 月，含 incomplete 提示）、待发货（附最早等待天数）、库存占用（fullCost 成本+件数）、未结算团数
 - **图表 ×2**：近 12 个月收益柱状图（含 lost 亏损红段堆叠）、按团收益横向对比（已分摊实心 / 未分摊半透明）
 - **异常账本**：退款单数与退回总额（Σ sell_price）、丢失单数与亏损总额（Σ 所有 lost 单——customer + stock——的 |canonical_profit|，复用唯一收益实现）；月份筛选器默认「全部时间」，退款/丢失按 `closed_at` 月过滤
 
 ### 6.5 设置页
 
 - 网站管理（增删改 + 颜色）；被订单/团/商品引用的网站禁止删除（RESTRICT），界面提示引用数
+- **汇率维护**（issue #11）：固定三行（AUD/USD/HKD），手填保存 + 「全部刷新」按钮调实时接口，显示更新时间；仅服务订单层预估（§7.5）
 - **导出 CSV**：订单全字段（adjustments 展开为 JSON 字符串，含 batch_name 列）；金额导出为「元」两位小数（导出时换算，人读友好）；不单独出团文件、不出 xlsx、不出库存导出
 - **备份**：「立即备份」流程（实现在 `src/db/backup.ts`，文件操作用 @tauri-apps/plugin-fs、scope 限备份目录）：
   1. `VACUUM INTO` 生成一致性快照，同目录命名 `tracker-YYYYMMDD-HHmmss.db.backup`（秒级防碰撞）
@@ -480,7 +490,7 @@ canonical_profit(order): ProfitResult
 2. **一团一站一币种**：成员单 site_id 必须匹配团；成员外币成本必填且币种必须匹配团；外币字段同空同填（CHECK 约束）。**跨表一致性由 db/ 层事务内校验强制**（入团/换团/转售出/编辑单的写路径在事务内比对 site 与币种；不用触发器，保持规则单份真源于 rules.ts）
 3. **一单至多一个团**；囤货单也允许挂 batch_id（可空）
 4. **历史数据不做导入器**，进行中业务手动补录（开荒期熟悉系统）
-5. 汇率联网查询仅服务订单层预估；团层权威汇率永远手填
+5. 汇率联网查询仅服务订单层预估；团层权威汇率永远手填。**预估汇率集中维护于 `rates` 表**（设置区手填 + 「全部刷新」调实时接口；OrderForm 新建单按币种静默预填，无记录则清空，表单内实时查询按钮兜底）
 6. **收益计算唯一实现**于 `db/rules.ts`（canonical_profit），团收益 = Σ 成员结果，页面/导出/统计不得各自实现
 7. **effective_rate 纯展示**，任何金额计算不得引用
 
@@ -538,4 +548,7 @@ canonical_profit(order): ProfitResult
 | 测试策略（issue #10 后补强） | 三层：①vitest（better-sqlite3 内存库跑真实 migrate+约束，共享 `db/testUtils.ts`）；②jsdom 组件交互测试（Testing Library，**db 层不 mock** 用真库当 prop；StatsPage 除外——Recharts 不在 jsdom 渲染，其逻辑由 stats.test.ts 覆盖）；③E2E 仅 CI：`tauri-plugin-wdio-webdriver`（`cfg(debug_assertions)` 门控，release 零侵入）+ `@wdio/tauri-service` embedded provider，macOS runner debug 构建跑冒烟（含 #10 双回归）；`npm test` 恒为纯 vitest，E2E 走 `npm run test:e2e` |
 | plugin-sql 两个坑（issue #10） | ①guest-js `close(db?)` 传参数而非 this.path——无参 close 会关**全部**连接池，必须 `close(conn.path)`；②默认池多连接（见数据访问层行 serialize 决策） |
 | 原生 JS 弹窗禁用（issue #10 Bug 3） | **Tauri macOS 的 WKWebView 不实现 alert/confirm/prompt**（no-op 返回 undefined），`if(!confirm())return` 会静默拦截。一律用应用内对话框：`components/ConfirmDialog.tsx` 的 `useConfirm()`（Promise 化确认框，挂 ConfirmDialogProvider），代码中禁止出现原生 confirm/alert |
+| 库存金额口径（issue #11） | 库存页总成本/每行成本 + §5.4 团口径「未售库存占用」统一改用 `fullCost`（buy_price_cny + shipping_fee + Σcost调整），与收益计算同口径，实现仍唯一于 rules.ts |
+| 汇率集中维护（issue #11） | 新增 rates 表：固定 3 行（AUD/USD/HKD，币种仍是写死枚举，新增币种走代码变更），设置区手填 + 「全部刷新」按钮调实时接口；OrderForm 选币种后从表静默预填（无记录则清空），保留表单内实时获取按钮兜底；estimated 联动逻辑不变 |
+| 订单一键复制（issue #11） | **复制 = 用源单商品/成本信息建 N 条新囤货单**（stock/in_stock，customer 单复制即转囤货）：弹窗输份数（默认 1，上限 20）；order_no 逐条走 createOrder 连号生成；买家四件套+sell_price+shipping_fee+tracking_no+履约时间戳一律清空；adjustments 只留 kind=cost；batch_id 仅团未结算才保留（batch_allocated 降级 manual）；缺 buy_price_cny 禁止复制并提示先补成本 |
 | 锁错误自愈（issue #10 后续，e2e 排查产物） | **根因（CI 取证）**：sqlx 归还连接走 Rust 异步任务，下一条语句的 acquire 可能抢在归还完成前 → 池膨胀 → FIFO 空闲队列把手工 BEGIN…COMMIT 的语句轮转到不同连接（WAL 下报 database is locked / no such table）。**防御三层**：①所有写事务（createOrder/shipOrder/转售出/删团/分摊/migrate）打成**单 execute 多语句批量**（`db/transaction.ts` executeBatch；sqlx-sqlite 单连接顺序执行整串，一次 acquire 完成整个事务）；②serialize 外壳每语句 1ms 间隙，让归还任务先完成、池保持单连接；③withLockRetry 退避重放 + 持续锁 recoverPool 关池重建兜底；启动序列另有 ROLLBACK 清悬挂事务 + 重试 |

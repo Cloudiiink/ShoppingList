@@ -11,4 +11,7 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
 
 // 汇率查询默认 mock：任何 import @/lib/rates 的组件拿到固定汇率 5.0，
 // 个别用例可用 vi.mocked(fetchRate).mockRejectedValueOnce(...) 覆盖
-vi.mock("@/lib/rates", () => ({ fetchRate: vi.fn(async () => 5.0) }));
+vi.mock("@/lib/rates", () => ({
+  fetchRate: vi.fn(async () => 5.0),
+  refreshAllRates: vi.fn(async () => {}),
+}));

@@ -10,20 +10,21 @@ function rawDb(): SqlDb {
 }
 
 describe("migrate", () => {
-  it("全新库：user_version 推进到最新版本，四表建成", async () => {
+  it("全新库：user_version 推进到最新版本，五表建成", async () => {
     const db = rawDb();
     await migrate(db);
     const [{ user_version }] = await db.select<{ user_version: number }[]>(
       "PRAGMA user_version"
     );
-    expect(user_version).toBe(1);
+    expect(user_version).toBe(2);
     const tables = await db.select<{ name: string }[]>(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('orders','batches','products','sites') ORDER BY name"
+      "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('orders','batches','products','sites','rates') ORDER BY name"
     );
     expect(tables.map((t) => t.name)).toEqual([
       "batches",
       "orders",
       "products",
+      "rates",
       "sites",
     ]);
   });
@@ -35,7 +36,7 @@ describe("migrate", () => {
     const [{ user_version }] = await db.select<{ user_version: number }[]>(
       "PRAGMA user_version"
     );
-    expect(user_version).toBe(1);
+    expect(user_version).toBe(2);
   });
 
   it("STRICT 生效：INTEGER 列写入非整数报错", async () => {

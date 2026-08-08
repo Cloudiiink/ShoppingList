@@ -5,6 +5,8 @@ import userEvent from "@testing-library/user-event";
 import { SettingsPage } from "./SettingsPage";
 import { createOrder } from "@/db/orders";
 import { listSites } from "@/db/sites";
+import { getRate } from "@/db/rates";
+import { refreshAllRates } from "@/lib/rates";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
 import type { SqlDb } from "@/db/types";
@@ -105,5 +107,41 @@ describe("SettingsPage", () => {
     expect(name).toMatch(/^orders-export-\d{8}\.csv$/);
     expect(content.startsWith("﻿")).toBe(true);
     expect(content).toContain("导出商品");
+  });
+
+  it("汇率维护：固定三行渲染，手填保存落库", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    // 固定三行，初始未设置
+    expect(await screen.findByText("汇率维护")).toBeInTheDocument();
+    for (const c of ["AUD", "USD", "HKD"]) {
+      expect(screen.getByText(c)).toBeInTheDocument();
+    }
+    const inputs = screen.getAllByPlaceholderText("未设置");
+    expect(inputs).toHaveLength(3);
+
+    // 手填 AUD = 4.7 并保存
+    await user.type(inputs[0]!, "4.7");
+    await user.click(screen.getAllByRole("button", { name: "保存" })[0]!);
+
+    expect(await screen.findByText("AUD 汇率已保存：4.7")).toBeInTheDocument();
+    expect((await getRate(db, "AUD"))?.rate).toBe(4.7);
+    expect(await screen.findByText(/更新于/)).toBeInTheDocument();
+  });
+
+  it("全部刷新：调用 refreshAllRates 并显示成功消息", async () => {
+    vi.mocked(refreshAllRates).mockImplementationOnce(async (d) => {
+      const { upsertRate } = await import("@/db/rates");
+      await upsertRate(d, "AUD", 5.0);
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: "全部刷新" }));
+
+    expect(await screen.findByText("汇率已全部刷新")).toBeInTheDocument();
+    expect(refreshAllRates).toHaveBeenCalledTimes(1);
+    expect((await getRate(db, "AUD"))?.rate).toBe(5.0);
   });
 });

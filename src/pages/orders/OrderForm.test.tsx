@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { OrderForm } from "./OrderForm";
 import { createOrder, listOrders } from "@/db/orders";
 import { listSites } from "@/db/sites";
+import { upsertRate } from "@/db/rates";
 import { fetchRate } from "@/lib/rates";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
@@ -82,6 +83,28 @@ describe("OrderForm", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
     const [o] = await listOrders(db);
     expect(o!.sell_price_cny).toBe(90000);
+  });
+
+  it("汇率表预填：新建单按币种从 rates 表静默预填，切换币种跟随", async () => {
+    await upsertRate(db, "AUD", 4.7);
+    await upsertRate(db, "USD", 7.2);
+    const user = userEvent.setup();
+    renderForm();
+
+    // 默认币种 AUD → 预填 4.7
+    await waitFor(() => {
+      expect((field("汇率") as HTMLInputElement).value).toBe("4.7");
+    });
+    // 切到 USD → 预填 7.2
+    await user.selectOptions(field("外币金额").parentElement!.querySelector("select")!, "USD");
+    await waitFor(() => {
+      expect((field("汇率") as HTMLInputElement).value).toBe("7.2");
+    });
+    // 切到 HKD（表里未设置）→ 留空
+    await user.selectOptions(field("外币金额").parentElement!.querySelector("select")!, "HKD");
+    await waitFor(() => {
+      expect((field("汇率") as HTMLInputElement).value).toBe("");
+    });
   });
 
   it("获取实时汇率失败：错误提示可见，手填汇率仍可保存", async () => {

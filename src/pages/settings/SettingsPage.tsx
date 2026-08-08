@@ -7,9 +7,12 @@ import { Label } from "@/components/ui/label";
 import { createSite, deleteSite, listSites, updateSite, siteRefCount } from "@/db/sites";
 import { listOrders } from "@/db/orders";
 import { listBatches } from "@/db/batches";
+import { listRates, upsertRate, type RateRow } from "@/db/rates";
+import { refreshAllRates } from "@/lib/rates";
 import { ordersToCsv } from "@/db/export";
 import { doBackup, listBackups } from "@/lib/backupFiles";
-import type { SiteRow, SqlDb } from "@/db/types";
+import { isoToLocalDateTime } from "@/lib/time";
+import { CURRENCIES, type Currency, type SiteRow, type SqlDb } from "@/db/types";
 
 export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged: (sites: SiteRow[]) => void }) {
   const [sites, setSites] = useState<SiteRow[]>([]);
@@ -23,6 +26,9 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
   const [dbPath, setDbPath] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [rates, setRates] = useState<RateRow[]>([]);
+  const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
+  const [refreshing, setRefreshing] = useState(false);
 
   const reload = useCallback(async () => {
     const ss = await listSites(db);
@@ -33,6 +39,9 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
     setRefCounts(counts);
     setBackups(await listBackups());
     setDbPath(`${await appConfigDir()}tracker.db`);
+    const rs = await listRates(db);
+    setRates(rs);
+    setRateDrafts(Object.fromEntries(rs.map((r) => [r.currency, String(r.rate)])));
   }, [db, onSitesChanged]);
 
   useEffect(() => {
@@ -85,6 +94,27 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
 
+  async function saveRate(c: Currency) {
+    setError(""); setMessage("");
+    try {
+      const v = Number(rateDrafts[c]);
+      await upsertRate(db, c, v);
+      setMessage(`${c} 汇率已保存：${v}`);
+      await reload();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function refreshRates() {
+    setError(""); setMessage("");
+    setRefreshing(true);
+    try {
+      await refreshAllRates(db);
+      setMessage("汇率已全部刷新");
+      await reload();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setRefreshing(false); }
+  }
+
   return (
     <div className="max-w-3xl space-y-6 p-4">
       {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-destructive">{error}</div>}
@@ -132,6 +162,50 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
           <div><Label>颜色</Label><Input type="color" value={newColor} onChange={(e) => setNewColor(e.target.value)} className="w-16" /></div>
           <Button onClick={addSite} disabled={!newName.trim()}>添加</Button>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold">汇率维护</h2>
+          <Button size="sm" variant="outline" onClick={refreshRates} disabled={refreshing}>
+            {refreshing ? "刷新中…" : "全部刷新"}
+          </Button>
+        </div>
+        <table className="w-full text-sm">
+          <tbody>
+            {CURRENCIES.map((c) => {
+              const row = rates.find((r) => r.currency === c);
+              return (
+                <tr key={c} className="border-b">
+                  <td className="w-20 p-2 font-medium">{c}</td>
+                  <td className="w-40 p-2">
+                    <Input
+                      value={rateDrafts[c] ?? ""}
+                      placeholder="未设置"
+                      onChange={(e) => setRateDrafts((d) => ({ ...d, [c]: e.target.value }))}
+                    />
+                  </td>
+                  <td className="p-2 text-muted-foreground">
+                    {row ? `更新于 ${isoToLocalDateTime(row.updated_at)}` : "未设置"}
+                  </td>
+                  <td className="w-24 p-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!(Number(rateDrafts[c]) > 0)}
+                      onClick={() => saveRate(c)}
+                    >
+                      保存
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="text-sm text-muted-foreground">
+          新建订单选币种后自动预填此汇率（仅订单层预估；团结算权威汇率仍在团页手填）。
+        </p>
       </section>
 
       <section className="space-y-2">

@@ -91,7 +91,19 @@ const V1_DDL: string[] = [
   `CREATE INDEX idx_orders_site_id ON orders(site_id)`,
 ];
 
-const MIGRATIONS: Migration[] = [{ version: 1, name: "init", statements: V1_DDL }];
+/** v2：集中维护的预估汇率表（issue #11）；币种仍是固定枚举，一行一币种 */
+const V2_DDL: string[] = [
+  `CREATE TABLE rates (
+    currency   TEXT PRIMARY KEY CHECK (currency IN ('AUD','USD','HKD')),
+    rate       REAL NOT NULL CHECK (rate > 0),
+    updated_at TEXT NOT NULL
+  ) STRICT`,
+];
+
+const MIGRATIONS: Migration[] = [
+  { version: 1, name: "init", statements: V1_DDL },
+  { version: 2, name: "rates", statements: V2_DDL },
+];
 
 export async function migrate(db: SqlDb): Promise<void> {
   const rows = await db.select<{ user_version: number }[]>(

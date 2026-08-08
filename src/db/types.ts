@@ -22,6 +22,9 @@ export type OrderStatus = CustomerStatus | StockStatus;
 export type BuyPriceSource = "estimated" | "manual" | "batch_allocated";
 export type Currency = "AUD" | "USD" | "HKD";
 
+/** 币种固定枚举的唯一常量源（DB CHECK/表单下拉/rates 表三处语义共享，新增币种走代码变更） */
+export const CURRENCIES: Currency[] = ["AUD", "USD", "HKD"];
+
 export interface OrderRow {
   id: number;
   order_no: string;

@@ -20,3 +20,10 @@ export function isoToLocalDate(iso: string | null): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
+
+/** UTC ISO → 本地日期+时分展示 */
+export function isoToLocalDateTime(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${isoToLocalDate(iso)} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}

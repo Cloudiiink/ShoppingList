@@ -28,13 +28,21 @@ async function seedStock(buyPrice = 2000) {
 }
 
 describe("InventoryPage", () => {
-  it("在库列表渲染 + 成本汇总", async () => {
-    await seedStock(2000);
+  it("在库列表渲染 + 成本汇总（fullCost 口径：含运费与成本调整）", async () => {
+    await createOrder(db, {
+      order_type: "stock",
+      product_name: "囤货商品",
+      site_id: sites[0]!.id,
+      buy_price_cny: 2000,
+      shipping_fee: 500,
+    });
     render(<InventoryPage db={db} sites={sites} />);
 
     expect(await screen.findByText("囤货商品")).toBeInTheDocument();
     expect(screen.getByText("在库")).toBeInTheDocument();
     expect(screen.getByText(/1 件/)).toBeInTheDocument();
+    // 总额与每行成本均含运费：2000 + 500 = 25.00 元
+    expect(screen.getAllByText("25.00").length).toBeGreaterThanOrEqual(2);
   });
 
   it("转售出核心流：填买家+卖出价 → order_type=customer、状态待发货、conversion 时间戳写入", async () => {
@@ -67,5 +75,19 @@ describe("InventoryPage", () => {
 
     expect(await screen.findByText("挂单中")).toBeInTheDocument();
     expect((await getOrder(db, stock.id)).status).toBe("listed");
+  });
+
+  it("一键复制：默认 1 份 → 列表多一条同商品在库单", async () => {
+    await seedStock();
+    const user = userEvent.setup();
+    render(<InventoryPage db={db} sites={sites} />);
+
+    await user.click(await screen.findByRole("button", { name: "复制" }));
+    expect(await screen.findByText(/复制为囤货单/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "确认复制" }));
+
+    await waitFor(async () => {
+      expect(await screen.findAllByText("囤货商品")).toHaveLength(2);
+    });
   });
 });

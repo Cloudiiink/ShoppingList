@@ -23,6 +23,7 @@ import { changeStatus, deleteOrder, updateOrder } from "@/db/orders";
 import {
   canonicalProfit,
   fenToYuan,
+  fullCost,
   settlementState,
   yuanToFen,
   type SettlementState,
@@ -240,7 +241,7 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
   const costTotal = members.reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
   const stockHolding = members
     .filter((m) => m.order_type === "stock" && (m.status === "in_stock" || m.status === "listed"))
-    .reduce((s, m) => s + (m.buy_price_cny ?? 0), 0);
+    .reduce((s, m) => s + fullCost(m), 0);
   const profitInfo = useMemo(() => {
     let sum = 0, incomplete = 0;
     for (const m of members) {

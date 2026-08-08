@@ -8,6 +8,7 @@ import { listBatches } from "@/db/batches";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "./OrderForm";
 import { ShipDialog } from "./ShipDialog";
+import { CopyOrderDialog } from "@/components/CopyOrderDialog";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { IN_PROGRESS_STATUSES } from "@/db/rules";
 
@@ -38,6 +39,7 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<OrderRow | null>(null);
   const [shipping, setShipping] = useState<OrderRow | null>(null);
+  const [copying, setCopying] = useState<OrderRow | null>(null);
 
   const reload = useCallback(async () => {
     const [os, bs, gs] = await Promise.all([
@@ -157,6 +159,9 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
         onShip={(o) => setShipping(o)}
         onStatus={doAction}
         onDelete={doDelete}
+        extraAction={(o) => (
+          <Button size="sm" variant="ghost" onClick={() => setCopying(o)}>复制</Button>
+        )}
       />
 
       <OrderForm
@@ -177,6 +182,14 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
         onClose={(saved) => {
           setShipping(null);
           if (saved) reload();
+        }}
+      />
+      <CopyOrderDialog
+        db={db}
+        order={copying}
+        onClose={(done) => {
+          setCopying(null);
+          if (done) reload();
         }}
       />
     </div>

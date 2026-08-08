@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { fetchRate } from "@/lib/rates";
+import { getRate } from "@/db/rates";
 import { isoToLocalInput, localInputToIso } from "@/lib/time";
 import { foreignToFen, fenToYuan, yuanToFen, normRate, nowUtc, parseAdjustments } from "@/db/rules";
 import type { Adjustment } from "@/db/rules";
@@ -25,11 +26,10 @@ import type {
   SiteRow,
   SqlDb,
 } from "@/db/types";
+import { CURRENCIES } from "@/db/types";
 import { createOrder, updateOrder, changeStatus, type OrderInput } from "@/db/orders";
 import { searchProducts } from "@/db/products";
 import { legalTargets } from "@/db/rules";
-
-const CURRENCIES: Currency[] = ["AUD", "USD", "HKD"];
 
 interface Props {
   db: SqlDb;
@@ -153,6 +153,23 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
     }));
     setSuggestions([]);
   }
+
+  // 汇率表预填（issue #11）：新建单时按币种从 rates 表静默预填；
+  // 表里没有则清空（旧币种的汇率不该残留），「获取实时汇率」按钮兜底；
+  // 编辑单不动（保留原单汇率）
+  useEffect(() => {
+    if (!open || order) return;
+    let cancelled = false;
+    getRate(db, f.cost_currency as Currency)
+      .then((row) => {
+        if (!cancelled) {
+          setF((prev) => ({ ...prev, exchange_rate: row ? String(row.rate) : "" }));
+        }
+      })
+      .catch(() => { /* 预填失败 = 留空手填 */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, order, f.cost_currency, db]);
 
   async function onFetchRate() {
     setRateLoading(true);

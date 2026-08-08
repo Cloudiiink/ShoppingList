@@ -13,7 +13,8 @@ import {
 import { listOrders, changeStatus } from "@/db/orders";
 import { listBatches } from "@/db/batches";
 import { convertStockToCustomer } from "@/db/inventory";
-import { canConvertStock, fenToYuan, legalTargets, yuanToFen } from "@/db/rules";
+import { CopyOrderDialog } from "@/components/CopyOrderDialog";
+import { canConvertStock, fenToYuan, fullCost, legalTargets, yuanToFen } from "@/db/rules";
 import { STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -36,6 +37,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [converting, setConverting] = useState<OrderRow | null>(null);
+  const [copying, setCopying] = useState<OrderRow | null>(null);
   const [error, setError] = useState("");
 
   const reload = useCallback(async () => {
@@ -52,7 +54,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   }, [reload]);
 
   const active = orders.filter((o) => o.status === "in_stock" || o.status === "listed");
-  const totalCost = active.reduce((s, o) => s + (o.buy_price_cny ?? 0), 0);
+  const totalCost = active.reduce((s, o) => s + fullCost(o), 0);
 
   const siteName = (id: number) => sites.find((s) => s.id === id)?.name ?? "";
 
@@ -100,13 +102,14 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
                 <td className="p-2">{siteName(o.site_id)}</td>
                 <td className="p-2">{STATUS_LABEL[o.status]}</td>
                 <td className="p-2">{isoToLocalDate(o.ordered_at)}</td>
-                <td className="p-2 text-right">{o.buy_price_cny != null ? fenToYuan(o.buy_price_cny) : "—"}</td>
+                <td className="p-2 text-right">{o.buy_price_cny != null ? fenToYuan(fullCost(o)) : "—"}</td>
                 <td className="p-2 text-muted-foreground">{o.note ?? ""}</td>
                 <td className="p-2">
                   <div className="flex flex-wrap gap-1">
                     {convertible && (
                       <Button size="sm" onClick={() => setConverting(o)}>转售出</Button>
                     )}
+                    <Button size="sm" variant="ghost" onClick={() => setCopying(o)}>复制</Button>
                     {targets.map((t) => (
                       <Button key={t} size="sm" variant="ghost" onClick={() => doAction(o, t)}>
                         {ACTION_LABEL[t] ?? t}
@@ -124,6 +127,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
       </table>
 
       <ConvertDialog db={db} batches={batches} order={converting} onClose={(done) => { setConverting(null); if (done) reload(); }} />
+      <CopyOrderDialog db={db} order={copying} onClose={(done) => { setCopying(null); if (done) reload(); }} />
     </div>
   );
 }
