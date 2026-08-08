@@ -8,6 +8,7 @@ import { listBatches } from "@/db/batches";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "./OrderForm";
 import { ShipDialog } from "./ShipDialog";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { IN_PROGRESS_STATUSES } from "@/db/rules";
 
 const IN_PROGRESS = IN_PROGRESS_STATUSES;
@@ -26,6 +27,7 @@ const VIEW_LABEL: [View, string][] = [
 ];
 
 export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
+  const confirm = useConfirm();
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
   const [adjGroups, setAdjGroups] = useState<string[]>([]);
@@ -108,7 +110,7 @@ export function OrdersPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   }
 
   async function doDelete(o: OrderRow) {
-    if (!window.confirm(`确认删除订单 ${o.order_no}？`)) return;
+    if (!(await confirm({ title: `确认删除订单 ${o.order_no}？`, confirmText: "删除", danger: true }))) return;
     await deleteOrder(db, o.id);
     await reload();
   }

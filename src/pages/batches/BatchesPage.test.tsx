@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
+import { renderWithConfirm } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { BatchesPage } from "./BatchesPage";
 import { createBatch, updateBatch, listMembers } from "@/db/batches";
@@ -36,7 +37,7 @@ async function fillMemberForm(
 describe("BatchesPage", () => {
   it("开团核心流：新建团 → 列表出现（预估态）", async () => {
     const user = userEvent.setup();
-    render(<BatchesPage db={db} sites={sites} />);
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
 
     await user.click(await screen.findByRole("button", { name: "新建团" }));
     await user.type(field("团名 *"), "202608-JAYD 一团");
@@ -53,7 +54,7 @@ describe("BatchesPage", () => {
   it("issue #10 Bug 1 回归：团详情「+ 加订单」填完可保存，成员列表出现", async () => {
     await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
     const user = userEvent.setup();
-    render(<BatchesPage db={db} sites={sites} />);
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
 
     await user.click(await screen.findByText("202608-JAYD 一团"));
     await user.click(await screen.findByRole("button", { name: "+ 加订单" }));
@@ -67,7 +68,7 @@ describe("BatchesPage", () => {
   it("纯人民币成员禁入团：缺外币成本时校验错误可见", async () => {
     const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
     const user = userEvent.setup();
-    render(<BatchesPage db={db} sites={sites} />);
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
 
     await user.click(await screen.findByText("202608-JAYD 一团"));
     await user.click(await screen.findByRole("button", { name: "+ 加订单" }));
@@ -101,7 +102,7 @@ describe("BatchesPage", () => {
     });
 
     const user = userEvent.setup();
-    render(<BatchesPage db={db} sites={sites} />);
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
 
     await user.click(await screen.findByText("202608-JAYD 一团"));
     await user.click(await screen.findByRole("button", { name: "结算分摊" }));
@@ -115,5 +116,33 @@ describe("BatchesPage", () => {
       expect(m.buy_price_source).toBe("batch_allocated");
       expect(m.buy_price_cny).toBe(50000); // 100 AUD × 5
     });
+  });
+
+  it("删除团：ConfirmDialog 确认后团删除、成员变散单（issue #10 Bug 3 回归）", async () => {
+    const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
+    const member = await createOrder(db, {
+      order_type: "customer",
+      product_name: "散单候选",
+      site_id: sites[0]!.id,
+      batch_id: batch.id,
+      buyer_wechat: "wx1",
+      sell_price_cny: 60000,
+      cost_foreign_amount: 10000,
+      cost_currency: "AUD",
+    });
+    const user = userEvent.setup();
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
+
+    await user.click(await screen.findByText("202608-JAYD 一团"));
+    await user.click(await screen.findByRole("button", { name: "删除团" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("确认删除团「202608-JAYD 一团」？")).toBeInTheDocument();
+    expect(within(dialog).getByText("成员单将变为散单。")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+
+    // 回到列表且团消失；成员 batch_id 置空
+    expect(await screen.findByText("暂无团")).toBeInTheDocument();
+    expect((await getOrder(db, member.id)).batch_id).toBeNull();
   });
 });

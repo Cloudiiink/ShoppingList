@@ -32,6 +32,7 @@ import type { BatchRow, Currency, OrderRow, OrderStatus, SiteRow, SqlDb } from "
 import { OrderForm } from "@/pages/orders/OrderForm";
 import { OrdersTable } from "@/components/OrdersTable";
 import { ShipDialog } from "@/pages/orders/ShipDialog";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { listAdjustmentGroups } from "@/db/orders";
 
 const STATE_LABEL: Record<SettlementState, { text: string; className: string }> = {
@@ -220,6 +221,7 @@ interface DetailProps {
 }
 
 function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, setError, onBack, onChanged, allocOpen, setAllocOpen, addMemberOpen, setAddMemberOpen }: DetailProps) {
+  const confirm = useConfirm();
   const [checkout, setCheckout] = useState("");
   const [rate, setRate] = useState("");
 
@@ -282,13 +284,13 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
   }
 
   async function doDeleteOrder(o: OrderRow) {
-    if (!window.confirm(`确认删除订单 ${o.order_no}？`)) return;
+    if (!(await confirm({ title: `确认删除订单 ${o.order_no}？`, confirmText: "删除", danger: true }))) return;
     await deleteOrder(db, o.id);
     await onChanged();
   }
 
   async function doDeleteBatch() {
-    if (!window.confirm(`确认删除团「${batch.name}」？成员单将变为散单。`)) return;
+    if (!(await confirm({ title: `确认删除团「${batch.name}」？`, body: "成员单将变为散单。", confirmText: "删除", danger: true }))) return;
     await deleteBatch(db, batch.id);
     onBack();
   }

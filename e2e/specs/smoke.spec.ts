@@ -102,6 +102,17 @@ describe("ShoppingList 冒烟", () => {
     await expect($(byText("td", "E2E 商品"))).toExist();
   });
 
+  it("issue #10 Bug 3 回归：应用内确认框删除订单", async () => {
+    // 行内「删除」→ 应用内确认框（WKWebView 的 window.confirm 是 no-op，
+    // 若误用原生 confirm 这里会永久卡住）
+    await (await $(byText("button", "删除"))).click();
+    const dlg = await $('//div[@role="dialog"]');
+    await dlg.waitForExist();
+    await (await $('//div[@role="dialog"]//*[contains(normalize-space(),"确认删除订单")]')).waitForExist();
+    await (await dlg.$('.//button[normalize-space()="删除"]')).click();
+    await (await $(byTextContains("h3", "成员订单（0）"))).waitForExist();
+  });
+
   it("issue #10 Bug 2 回归：立即备份后所有页面仍可用", async () => {
     await navTo("设置");
     await (await $(byText("button", "立即备份"))).click();

@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import { useConfirm } from "@/components/ConfirmDialog";
 import { canonicalProfit, fenToYuan, legalTargets, IN_PROGRESS_STATUSES } from "@/db/rules";
 import { SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
@@ -61,14 +62,15 @@ export function OrdersTable({
 }: Props) {
   const batchName = (id: number | null) => batches.find((b) => b.id === id)?.name ?? "";
   const siteName = (id: number) => sites.find((s) => s.id === id)?.name ?? "";
+  const confirm = useConfirm();
 
-  function handleStatus(o: OrderRow, to: OrderStatus) {
+  async function handleStatus(o: OrderRow, to: OrderStatus) {
     if (to === "shipped" && o.status === "paid_pending_ship") {
       onShip(o);
       return;
     }
     if (to === "done" && o.shipping_fee == null) {
-      if (!window.confirm("邮费未填，收益将按 0 邮费计算，仍要完结？")) return;
+      if (!(await confirm({ title: "邮费未填，收益将按 0 邮费计算，仍要完结？", confirmText: "完结" }))) return;
     }
     onStatus(o, to);
   }
