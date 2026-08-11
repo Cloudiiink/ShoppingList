@@ -15,7 +15,7 @@ import {
   statusChangePatch,
 } from "./rules";
 import type { Adjustment } from "./rules";
-import { assertBatchMembership, getBatch } from "./batches";
+import { assertBatchMembership, getBatch, isBatchSettled } from "./batches";
 import { executeBatch } from "./transaction";
 
 /** 创建/编辑订单的输入 */
@@ -33,6 +33,10 @@ export interface OrderInput {
   tracking_no?: string | null;
   cost_foreign_amount?: number | null;
   cost_currency?: Currency | null;
+  /** 折扣率（如 0.88）；与 original_foreign_amount 必须同空同填 */
+  discount_rate?: number | null;
+  /** 折前外币原价（最小单位）；cost_foreign_amount 始终是折后价 */
+  original_foreign_amount?: number | null;
   exchange_rate?: number | null;
   buy_price_cny?: number | null;
   buy_price_source?: "estimated" | "manual" | "batch_allocated";
@@ -45,6 +49,8 @@ export interface OrderInput {
 const SETTLEMENT_FIELDS = [
   "cost_foreign_amount",
   "cost_currency",
+  "discount_rate",
+  "original_foreign_amount",
   "buy_price_cny",
   "buy_price_source",
   "batch_id",
@@ -63,6 +69,17 @@ function validate(input: OrderInput): void {
   const hasCurrency = input.cost_currency != null;
   if (hasAmount !== hasCurrency) {
     throw new Error("外币金额与币种必须同空同填");
+  }
+  // 折扣两列同生同灭（跨列 CHECK 无法随 ALTER 添加，语义闸在这里）
+  const hasRate = input.discount_rate != null;
+  const hasOriginal = input.original_foreign_amount != null;
+  if (hasRate !== hasOriginal) {
+    throw new Error("折扣率与折前原价必须同空同填");
+  }
+  if (hasRate) {
+    const r = input.discount_rate!;
+    if (!(r > 0 && r <= 1)) throw new Error("折扣率必须在 0-1 之间（如 0.88）");
+    if (!hasAmount) throw new Error("有折扣的订单必须填写外币成本（折后价）");
   }
   if (!input.product_name?.trim()) throw new Error("商品名必填");
   if (!input.site_id) throw new Error("网站必选");
@@ -117,10 +134,11 @@ export async function createOrder(
      INSERT INTO orders (
         order_no, order_type, status, batch_id, buyer_wechat, buyer_alias,
         region, product_name, product_note, site_id, reserved_at, ordered_at,
-        tracking_no, cost_foreign_amount, cost_currency, exchange_rate,
+        tracking_no, cost_foreign_amount, cost_currency, discount_rate,
+        original_foreign_amount, exchange_rate,
         buy_price_cny, buy_price_source, sell_price_cny, shipping_fee,
         adjustments, note, created_at, updated_at, settlement_updated_at
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?);
      INSERT INTO products (name, default_site_id, last_cost, use_count)
       VALUES (?, ?, ?, 1)
       ON CONFLICT(name) DO UPDATE SET
@@ -144,6 +162,8 @@ export async function createOrder(
       input.tracking_no ?? null,
       input.cost_foreign_amount ?? null,
       input.cost_currency ?? null,
+      input.discount_rate ?? null,
+      input.original_foreign_amount ?? null,
       input.exchange_rate != null ? normRate(input.exchange_rate) : null,
       input.buy_price_cny ?? null,
       input.buy_price_source ?? "estimated",
@@ -181,6 +201,7 @@ export const MAX_COPY_COUNT = 20;
  * customer 单复制即转囤货单。逐条走 createOrder，继承全部校验/CHECK/入团闸/连号。
  * 注意：逐条独立事务，**非原子**——中途失败会留下已创建的部分副本（份数 ≤20，风险可接受）。
  * 清空：买家四件套、卖出价、运费、快递单号；adjustments 只留 kind=cost；
+ * 折扣信息（discount_rate + 折前原价）随副本继承（issue #12）；
  * batch_id 仅团未结算才保留（batch_allocated 必已结算 → 降级 manual 并记散单）。
  */
 export async function copyOrdersAsStock(
@@ -199,7 +220,7 @@ export async function copyOrdersAsStock(
   let batchId: number | null = null;
   if (src.batch_id !== null) {
     const b = await getBatch(db, src.batch_id);
-    if (b.exchange_rate === null) batchId = b.id; // 未结算才保留
+    if (!isBatchSettled(b)) batchId = b.id; // 未结算才保留
   }
 
   const input: OrderInput = {
@@ -211,6 +232,8 @@ export async function copyOrdersAsStock(
     reserved_at: src.reserved_at,
     cost_foreign_amount: src.cost_foreign_amount,
     cost_currency: src.cost_currency,
+    discount_rate: src.discount_rate,
+    original_foreign_amount: src.original_foreign_amount,
     exchange_rate: src.exchange_rate,
     buy_price_cny: src.buy_price_cny,
     buy_price_source: src.buy_price_source === "batch_allocated" ? "manual" : src.buy_price_source,
@@ -280,6 +303,8 @@ export async function updateOrder(
     tracking_no: existing.tracking_no,
     cost_foreign_amount: existing.cost_foreign_amount,
     cost_currency: existing.cost_currency,
+    discount_rate: existing.discount_rate,
+    original_foreign_amount: existing.original_foreign_amount,
     exchange_rate: existing.exchange_rate,
     buy_price_cny: existing.buy_price_cny,
     buy_price_source: existing.buy_price_source,
@@ -318,6 +343,8 @@ export async function updateOrder(
     ["tracking_no", merged.tracking_no ?? null],
     ["cost_foreign_amount", merged.cost_foreign_amount ?? null],
     ["cost_currency", merged.cost_currency ?? null],
+    ["discount_rate", merged.discount_rate ?? null],
+    ["original_foreign_amount", merged.original_foreign_amount ?? null],
     ["exchange_rate", merged.exchange_rate != null ? normRate(merged.exchange_rate) : null],
     ["buy_price_cny", merged.buy_price_cny ?? null],
     ["buy_price_source", merged.buy_price_source ?? "estimated"],

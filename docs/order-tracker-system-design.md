@@ -270,6 +270,12 @@ CREATE TABLE rates (
   rate       REAL NOT NULL CHECK (rate > 0),  -- normRate() 归一化后入库
   updated_at TEXT NOT NULL
 ) STRICT;
+
+-- v3 迁移新增（issue #12）：订单折扣。cost_foreign_amount 始终是折后真实支付价
+ALTER TABLE orders ADD COLUMN discount_rate REAL
+  CHECK (discount_rate > 0 AND discount_rate <= 1);  -- 如 0.88；NULL = 无折扣
+ALTER TABLE orders ADD COLUMN original_foreign_amount INTEGER;  -- 折前外币原价（最小单位）
+-- 注：两列同生同灭是跨列不变量，ALTER 无法补表级 CHECK，由 db/orders validate() 强制
 ```
 
 **校验双闸分工**：DB（DDL/CHECK）管结构存在性（非空、枚举、同空同填、JSON 形状、STRICT 类型）；rules.ts 管语义（转移矩阵、状态门槛如转 shipped/lost 前 buy_price 必填、金额运算）。db/ 模块所有写入口统一过 `validateOrder()`，与 DB 约束同规则但不互相替代。
@@ -549,6 +555,8 @@ canonical_profit(order): ProfitResult
 | plugin-sql 两个坑（issue #10） | ①guest-js `close(db?)` 传参数而非 this.path——无参 close 会关**全部**连接池，必须 `close(conn.path)`；②默认池多连接（见数据访问层行 serialize 决策） |
 | 原生 JS 弹窗禁用（issue #10 Bug 3） | **Tauri macOS 的 WKWebView 不实现 alert/confirm/prompt**（no-op 返回 undefined），`if(!confirm())return` 会静默拦截。一律用应用内对话框：`components/ConfirmDialog.tsx` 的 `useConfirm()`（Promise 化确认框，挂 ConfirmDialogProvider），代码中禁止出现原生 confirm/alert |
 | 库存金额口径（issue #11） | 库存页总成本/每行成本 + §5.4 团口径「未售库存占用」统一改用 `fullCost`（buy_price_cny + shipping_fee + Σcost调整），与收益计算同口径，实现仍唯一于 rules.ts |
+| 订单折扣录入（issue #12） | **折扣作用于外币成本**：表单输入折前原价 + 折扣率（小数如 0.88），自动算折后价；`cost_foreign_amount` 恒存折后真实支付价（汇率联动/团分摊/收益计算零改动）；迁移 v3 加 `discount_rate`（CHECK 0<rate≤1）+ `original_foreign_amount` 两列，同生同灭由 validate() 强制（ALTER 无法补跨列 CHECK）；存量单两列 NULL；复制随副本继承；仅编辑表单回显，列表不加标记。**舍入规则**：折后价 = 原价 × 折扣率，四舍五入到外币最小单位（分）；折扣两列计入 SETTLEMENT_FIELDS（折扣变更 = 成本语义变更，刷新 settlement_updated_at 触发待重新分摊检测） |
+| 团内复制入口（issue #13） | 团详情成员行加「复制」按钮，**复用「复制为囤货单」语义零改动**（未结算团保留 batch_id = 同团囤货副本；已结算团降级散单 + batch_allocated→manual）；CopyOrderDialog 对已结算团源单明示「副本将落为散单」，避免"点了没反应"的错觉 |
 | 汇率集中维护（issue #11） | 新增 rates 表：固定 3 行（AUD/USD/HKD，币种仍是写死枚举，新增币种走代码变更），设置区手填 + 「全部刷新」按钮调实时接口；OrderForm 选币种后从表静默预填（无记录则清空），保留表单内实时获取按钮兜底；estimated 联动逻辑不变 |
 | 订单一键复制（issue #11） | **复制 = 用源单商品/成本信息建 N 条新囤货单**（stock/in_stock，customer 单复制即转囤货）：弹窗输份数（默认 1，上限 20）；order_no 逐条走 createOrder 连号生成；买家四件套+sell_price+shipping_fee+tracking_no+履约时间戳一律清空；adjustments 只留 kind=cost；batch_id 仅团未结算才保留（batch_allocated 降级 manual）；缺 buy_price_cny 禁止复制并提示先补成本 |
 | 锁错误自愈（issue #10 后续，e2e 排查产物） | **根因（CI 取证）**：sqlx 归还连接走 Rust 异步任务，下一条语句的 acquire 可能抢在归还完成前 → 池膨胀 → FIFO 空闲队列把手工 BEGIN…COMMIT 的语句轮转到不同连接（WAL 下报 database is locked / no such table）。**防御三层**：①所有写事务（createOrder/shipOrder/转售出/删团/分摊/migrate）打成**单 execute 多语句批量**（`db/transaction.ts` executeBatch；sqlx-sqlite 单连接顺序执行整串，一次 acquire 完成整个事务）；②serialize 外壳每语句 1ms 间隙，让归还任务先完成、池保持单连接；③withLockRetry 退避重放 + 持续锁 recoverPool 关池重建兜底；启动序列另有 ROLLBACK 清悬挂事务 + 重试 |

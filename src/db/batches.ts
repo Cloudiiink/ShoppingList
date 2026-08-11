@@ -29,6 +29,11 @@ export async function getBatch(db: SqlDb, id: number): Promise<BatchRow> {
   return rows[0];
 }
 
+/** 已结算判定（单源）：exchange_rate 非空即已结算。复制降级与「落散单」提示共用 */
+export function isBatchSettled(b: BatchRow): boolean {
+  return b.exchange_rate !== null;
+}
+
 export async function updateBatch(
   db: SqlDb,
   id: number,

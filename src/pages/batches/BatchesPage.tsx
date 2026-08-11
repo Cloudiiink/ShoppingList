@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import type { BatchRow, Currency, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 import { OrderForm } from "@/pages/orders/OrderForm";
 import { OrdersTable } from "@/components/OrdersTable";
+import { CopyOrderDialog } from "@/components/CopyOrderDialog";
 import { ShipDialog } from "@/pages/orders/ShipDialog";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { listAdjustmentGroups } from "@/db/orders";
@@ -275,6 +276,7 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
   const [editing, setEditing] = useState<OrderRow | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [shipping, setShipping] = useState<OrderRow | null>(null);
+  const [copying, setCopying] = useState<OrderRow | null>(null);
 
   async function doStatus(o: OrderRow, to: OrderStatus) {
     setError("");
@@ -369,7 +371,10 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
         onStatus={doStatus}
         onDelete={doDeleteOrder}
         extraAction={(m) => (
-          <Button size="sm" variant="ghost" onClick={() => removeMember(m)}>移出</Button>
+          <>
+            <Button size="sm" variant="ghost" onClick={() => setCopying(m)}>复制</Button>
+            <Button size="sm" variant="ghost" onClick={() => removeMember(m)}>移出</Button>
+          </>
         )}
         emptyText="暂无成员订单"
       />
@@ -398,6 +403,11 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
         db={db}
         order={shipping}
         onClose={(saved) => { setShipping(null); if (saved) onChanged(); }}
+      />
+      <CopyOrderDialog
+        db={db}
+        order={copying}
+        onClose={(done) => { setCopying(null); if (done) onChanged(); }}
       />
     </div>
   );

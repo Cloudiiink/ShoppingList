@@ -45,6 +45,10 @@ export interface OrderRow {
   tracking_no: string | null;
   cost_foreign_amount: number | null;
   cost_currency: Currency | null;
+  /** 折扣率（如 0.88）；null = 无折扣。与 original_foreign_amount 同生同灭 */
+  discount_rate: number | null;
+  /** 折前外币原价（最小单位）；cost_foreign_amount 始终是折后真实支付价 */
+  original_foreign_amount: number | null;
   exchange_rate: number | null;
   buy_price_cny: Fen | null;
   buy_price_source: BuyPriceSource;

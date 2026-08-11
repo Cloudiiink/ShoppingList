@@ -31,6 +31,8 @@ function order(overrides: Partial<OrderRow>): OrderRow {
     tracking_no: null,
     cost_foreign_amount: null,
     cost_currency: null,
+    discount_rate: null,
+    original_foreign_amount: null,
     exchange_rate: null,
     buy_price_cny: 5000,
     buy_price_source: "estimated",

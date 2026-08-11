@@ -213,3 +213,80 @@ describe("listOrders / deleteOrder", () => {
     await expect(getOrder(db, o.id)).rejects.toThrow();
   });
 });
+
+describe("折扣字段（issue #12）", () => {
+  const discounted = {
+    ...baseCustomer,
+    cost_foreign_amount: 8800, // 折后价
+    cost_currency: "AUD" as const,
+    discount_rate: 0.88,
+    original_foreign_amount: 10000, // 折前原价
+  };
+
+  it("带折扣建单：两列落库，cost_foreign_amount 是折后价", async () => {
+    const o = await createOrder(db, discounted);
+    expect(o.discount_rate).toBe(0.88);
+    expect(o.original_foreign_amount).toBe(10000);
+    expect(o.cost_foreign_amount).toBe(8800);
+  });
+
+  it("无折扣建单：两列为 NULL", async () => {
+    const o = await createOrder(db, {
+      ...baseCustomer,
+      cost_foreign_amount: 8800,
+      cost_currency: "AUD",
+    });
+    expect(o.discount_rate).toBeNull();
+    expect(o.original_foreign_amount).toBeNull();
+  });
+
+  it("折扣率与折前原价必须同空同填", async () => {
+    await expect(
+      createOrder(db, { ...discounted, original_foreign_amount: null })
+    ).rejects.toThrow(/同空同填/);
+    await expect(
+      createOrder(db, { ...discounted, discount_rate: null })
+    ).rejects.toThrow(/同空同填/);
+  });
+
+  it("折扣率越界（0 / 1.5）抛错", async () => {
+    await expect(
+      createOrder(db, { ...discounted, discount_rate: 0 })
+    ).rejects.toThrow(/折扣率/);
+    await expect(
+      createOrder(db, { ...discounted, discount_rate: 1.5 })
+    ).rejects.toThrow(/折扣率/);
+  });
+
+  it("有折扣但无外币成本抛错", async () => {
+    await expect(
+      createOrder(db, {
+        ...discounted,
+        cost_foreign_amount: null,
+        cost_currency: null,
+      })
+    ).rejects.toThrow(/外币成本/);
+  });
+
+  it("编辑加/清折扣；折扣字段变更刷新 settlement_updated_at", async () => {
+    const o = await createOrder(db, {
+      ...baseCustomer,
+      cost_foreign_amount: 8800,
+      cost_currency: "AUD",
+    });
+    const withDiscount = await updateOrder(db, o.id, {
+      discount_rate: 0.88,
+      original_foreign_amount: 10000,
+    });
+    expect(withDiscount.discount_rate).toBe(0.88);
+    expect(withDiscount.original_foreign_amount).toBe(10000);
+    expect(withDiscount.settlement_updated_at).not.toBeNull();
+
+    const cleared = await updateOrder(db, o.id, {
+      discount_rate: null,
+      original_foreign_amount: null,
+    });
+    expect(cleared.discount_rate).toBeNull();
+    expect(cleared.original_foreign_amount).toBeNull();
+  });
+});

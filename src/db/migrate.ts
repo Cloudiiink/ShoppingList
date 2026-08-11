@@ -100,9 +100,21 @@ const V2_DDL: string[] = [
   ) STRICT`,
 ];
 
+/**
+ * v3：订单折扣（issue #12）。orders 加两列：折前外币原价 + 折扣率（如 0.88）。
+ * cost_foreign_amount 语义不变 = 折后真实支付价。两列同生同灭由 db/orders.validate 保证
+ * （ALTER ADD COLUMN 无法加跨列 CHECK）；存量单两列皆 NULL = 无折扣。
+ */
+const V3_DDL: string[] = [
+  `ALTER TABLE orders ADD COLUMN discount_rate REAL
+     CHECK (discount_rate > 0 AND discount_rate <= 1)`,
+  `ALTER TABLE orders ADD COLUMN original_foreign_amount INTEGER`,
+];
+
 const MIGRATIONS: Migration[] = [
   { version: 1, name: "init", statements: V1_DDL },
   { version: 2, name: "rates", statements: V2_DDL },
+  { version: 3, name: "order_discount", statements: V3_DDL },
 ];
 
 export async function migrate(db: SqlDb): Promise<void> {

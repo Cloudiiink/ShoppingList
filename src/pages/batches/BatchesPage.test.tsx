@@ -5,7 +5,7 @@ import { renderWithConfirm } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { BatchesPage } from "./BatchesPage";
 import { createBatch, updateBatch, listMembers } from "@/db/batches";
-import { createOrder, getOrder } from "@/db/orders";
+import { createOrder, getOrder, listOrders } from "@/db/orders";
 import { listSites } from "@/db/sites";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
@@ -29,7 +29,7 @@ async function fillMemberForm(
   await user.type(field("买家微信 *"), "wx-batch");
   await user.type(field("卖出价（元）*"), "600");
   if (opts.foreign != null) {
-    await user.type(field("外币金额"), opts.foreign);
+    await user.type(field(/外币原价/), opts.foreign);
     await user.type(field("汇率"), "5");
   }
 }
@@ -116,6 +116,75 @@ describe("BatchesPage", () => {
       expect(m.buy_price_source).toBe("batch_allocated");
       expect(m.buy_price_cny).toBe(50000); // 100 AUD × 5
     });
+  });
+
+  it("团内复制（issue #13）：未结算团成员行「复制」→ 副本为同团囤货单", async () => {
+    const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
+    await createOrder(db, {
+      order_type: "customer",
+      product_name: "团内商品",
+      site_id: sites[0]!.id,
+      batch_id: batch.id,
+      buyer_wechat: "wx1",
+      sell_price_cny: 80000,
+      cost_foreign_amount: 10000,
+      cost_currency: "AUD",
+      exchange_rate: 5,
+      buy_price_cny: 50000,
+    });
+    const user = userEvent.setup();
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
+
+    await user.click(await screen.findByText("202608-JAYD 一团"));
+    await user.click(await screen.findByRole("button", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "确认复制" }));
+
+    // 副本保留 batch_id（团未结算）→ 成员数 2，副本为 stock/in_stock
+    expect(await screen.findByText("成员订单（2）")).toBeInTheDocument();
+    const ms = await listMembers(db, batch.id);
+    const copy = ms.find((m) => m.order_type === "stock");
+    expect(copy).toBeDefined();
+    expect(copy!.status).toBe("in_stock");
+    expect(copy!.buyer_wechat).toBeNull();
+  });
+
+  it("团内复制（issue #13）：已结算团源单弹窗明示「副本落散单」", async () => {
+    const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
+    await createOrder(db, {
+      order_type: "customer",
+      product_name: "团内商品",
+      site_id: sites[0]!.id,
+      batch_id: batch.id,
+      buyer_wechat: "wx1",
+      sell_price_cny: 80000,
+      cost_foreign_amount: 10000,
+      cost_currency: "AUD",
+      buy_price_cny: 50000,
+    });
+    await updateBatch(db, batch.id, { exchange_rate: 4.7 }); // 已结算
+
+    const user = userEvent.setup();
+    renderWithConfirm(<BatchesPage db={db} sites={sites} />);
+
+    await user.click(await screen.findByText("202608-JAYD 一团"));
+    await user.click(await screen.findByRole("button", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText(/副本将落为散单囤货/)
+    ).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "确认复制" }));
+
+    // 副本落散单：团成员数不变，新单是散单囤货
+    await waitFor(async () => {
+      expect(await listMembers(db, batch.id)).toHaveLength(1);
+    });
+    const all = await listOrders(db);
+    const copy = all.find((o) => o.order_type === "stock");
+    expect(copy).toBeDefined();
+    expect(copy!.batch_id).toBeNull();
+    // 源单是 estimated，副本原样继承（batch_allocated → manual 的降级由 copy.test.ts 覆盖）
+    expect(copy!.buy_price_source).toBe("estimated");
   });
 
   it("删除团：ConfirmDialog 确认后团删除、成员变散单（issue #10 Bug 3 回归）", async () => {

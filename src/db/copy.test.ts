@@ -106,6 +106,24 @@ describe("copyOrdersAsStock 一键复制", () => {
     await expect(copyOrdersAsStock(db, src.id, 1.5)).rejects.toThrow(/份数/);
   });
 
+  it("折扣信息随副本继承（issue #12）", async () => {
+    const src = await createOrder(db, {
+      order_type: "stock",
+      product_name: "折扣囤货",
+      site_id: siteId,
+      buy_price_cny: 4136,
+      cost_foreign_amount: 8800, // 折后价
+      cost_currency: "AUD",
+      discount_rate: 0.88,
+      original_foreign_amount: 10000,
+      exchange_rate: 4.7,
+    });
+    const [c] = await copyOrdersAsStock(db, src.id, 1);
+    expect(c!.discount_rate).toBe(0.88);
+    expect(c!.original_foreign_amount).toBe(10000);
+    expect(c!.cost_foreign_amount).toBe(8800);
+  });
+
   it("团未结算：batch_id 保留", async () => {
     const b = await createBatch(db, { name: "一团", site_id: siteId, currency: "AUD" });
     const src = await createOrder(db, {

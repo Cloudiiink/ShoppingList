@@ -55,7 +55,8 @@ interface FormState {
   site_id: string;
   batch_id: string;
   ordered_at: string;
-  cost_foreign: string; // 外币金额（元，两位小数）
+  cost_foreign: string; // 折前外币原价（元，两位小数）；无折扣时 = 实付
+  discount_rate: string; // 折扣率（如 0.88），空 = 无折扣
   cost_currency: string;
   exchange_rate: string;
   buy_price: string; // 人民币元
@@ -77,7 +78,14 @@ function initFrom(order: OrderRow | null, presetBatch?: BatchRow | null): FormSt
     site_id: order ? String(order.site_id) : "",
     batch_id: order?.batch_id != null ? String(order.batch_id) : "",
     ordered_at: isoToLocalInput(order?.ordered_at ?? nowUtc()),
-    cost_foreign: order?.cost_foreign_amount != null ? fenToYuan(order.cost_foreign_amount) : "",
+    cost_foreign: order
+      ? order.original_foreign_amount != null
+        ? fenToYuan(order.original_foreign_amount)
+        : order.cost_foreign_amount != null
+          ? fenToYuan(order.cost_foreign_amount)
+          : ""
+      : "",
+    discount_rate: order?.discount_rate != null ? String(order.discount_rate) : "",
     cost_currency: order?.cost_currency ?? "AUD",
     exchange_rate: order?.exchange_rate != null ? String(order.exchange_rate) : "",
     buy_price: order?.buy_price_cny != null ? fenToYuan(order.buy_price_cny) : "",
@@ -114,17 +122,27 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setF((prev) => ({ ...prev, [k]: v }));
 
-  // 汇率联动：仅 source = estimated 时随外币成本/汇率重算（§5.2）
-  const linkedBuyPrice = useMemo(() => {
-    if (f.buy_price_source !== "estimated") return null;
-    if (!f.cost_foreign || !f.exchange_rate) return null;
+  // 折后外币成本（最小单位）：有折扣 = 原价 × 折扣率（四舍五入到外币最小单位）；
+  // 无折扣 = 原价本身。折扣率非法时不派生（save 时报错）
+  const costForeignMinor = useMemo(() => {
+    if (!f.cost_foreign) return null;
     try {
-      const minor = yuanToFen(f.cost_foreign);
-      return foreignToFen(minor, Number(f.exchange_rate));
+      const orig = yuanToFen(f.cost_foreign);
+      if (!f.discount_rate) return orig;
+      const r = Number(f.discount_rate);
+      if (!(r > 0 && r <= 1)) return null;
+      return Math.round(orig * r);
     } catch {
       return null;
     }
-  }, [f.cost_foreign, f.exchange_rate, f.buy_price_source]);
+  }, [f.cost_foreign, f.discount_rate]);
+
+  // 汇率联动：仅 source = estimated 时随折后外币成本/汇率重算（§5.2）
+  const linkedBuyPrice = useMemo(() => {
+    if (f.buy_price_source !== "estimated") return null;
+    if (costForeignMinor == null || !f.exchange_rate) return null;
+    return foreignToFen(costForeignMinor, Number(f.exchange_rate));
+  }, [costForeignMinor, f.exchange_rate, f.buy_price_source]);
 
   useEffect(() => {
     if (linkedBuyPrice != null) set("buy_price", fenToYuan(linkedBuyPrice));
@@ -196,6 +214,15 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
   async function save() {
     setError("");
     try {
+      if (f.discount_rate) {
+        const r = Number(f.discount_rate);
+        if (!(r > 0 && r <= 1)) throw new Error("折扣率必须在 0-1 之间（如 0.88）");
+        if (!f.cost_foreign) throw new Error("填写折扣率时必须填写外币原价");
+      }
+      // 非空但派生不出折后价 = 原价输入非法（memo 的 try/catch 只兜底展示，保存必须显式报错）
+      if (f.cost_foreign && costForeignMinor == null) {
+        throw new Error("外币原价输入非法（应为最多两位小数的金额）");
+      }
       const input: OrderInput = {
         order_type: f.order_type,
         product_name: f.product_name.trim(),
@@ -206,8 +233,11 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
         region: f.region.trim() || null,
         product_note: f.product_note.trim() || null,
         ordered_at: localInputToIso(f.ordered_at) ?? nowUtc(),
-        cost_foreign_amount: f.cost_foreign ? yuanToFen(f.cost_foreign) : null,
-        cost_currency: f.cost_foreign ? (f.cost_currency as Currency) : null,
+        cost_foreign_amount: costForeignMinor,
+        cost_currency: costForeignMinor != null ? (f.cost_currency as Currency) : null,
+        discount_rate: f.discount_rate ? Number(f.discount_rate) : null,
+        original_foreign_amount:
+          f.discount_rate && f.cost_foreign ? yuanToFen(f.cost_foreign) : null,
         exchange_rate: f.exchange_rate ? normRate(Number(f.exchange_rate)) : null,
         buy_price_cny: f.buy_price ? yuanToFen(f.buy_price) : null,
         buy_price_source: f.buy_price_source,
@@ -311,7 +341,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
 
           {/* 汇率区 */}
           <div>
-            <Label>外币金额</Label>
+            <Label>外币原价{f.discount_rate ? "（折前）" : "（无折扣 = 实付）"}</Label>
             <div className="flex gap-1">
               <Input value={f.cost_foreign} onChange={(e) => set("cost_foreign", e.target.value)} placeholder="0.00" />
               <Select className="w-24" value={f.cost_currency} disabled={!!presetBatch} onChange={(e) => set("cost_currency", e.target.value)}>
@@ -321,6 +351,18 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
               </Select>
             </div>
           </div>
+          <div>
+            <Label>折扣率（空 = 无折扣）</Label>
+            <Input value={f.discount_rate} onChange={(e) => set("discount_rate", e.target.value)} placeholder="如 0.88" />
+          </div>
+          {f.discount_rate && costForeignMinor != null && (
+            <div>
+              <Label>折后外币金额</Label>
+              <div className="py-1 text-sm font-medium">
+                {fenToYuan(costForeignMinor)} {f.cost_currency}
+              </div>
+            </div>
+          )}
           <div>
             <Label>汇率</Label>
             <div className="flex gap-1">

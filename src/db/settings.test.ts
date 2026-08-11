@@ -43,6 +43,7 @@ function order(overrides: Partial<OrderRow>): OrderRow {
     ordered_at: "2026-08-01T00:00:00.000Z", shipped_at: "2026-08-02T00:00:00.000Z",
     closed_at: "2026-08-03T00:00:00.000Z", converted_from_stock_at: null,
     tracking_no: "SF123", cost_foreign_amount: 10000, cost_currency: "AUD",
+    discount_rate: null, original_foreign_amount: null,
     exchange_rate: 4.7, buy_price_cny: 47000, buy_price_source: "batch_allocated",
     sell_price_cny: 80000, shipping_fee: 1500,
     adjustments: '[{"kind":"cost","group":"关税","amount":200}]',
