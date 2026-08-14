@@ -13,6 +13,8 @@ import { ordersToCsv } from "@/db/export";
 import { doBackup, listBackups } from "@/lib/backupFiles";
 import { isoToLocalDateTime } from "@/lib/time";
 import { CURRENCIES, type Currency, type SiteRow, type SqlDb } from "@/db/types";
+import { useHelpIcons } from "@/lib/helpIcons";
+import { HelpIcon } from "@/components/HelpIcon";
 
 export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged: (sites: SiteRow[]) => void }) {
   const [sites, setSites] = useState<SiteRow[]>([]);
@@ -29,6 +31,7 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
   const [rates, setRates] = useState<RateRow[]>([]);
   const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const { showHelp, setShowHelp } = useHelpIcons();
 
   const reload = useCallback(async () => {
     const ss = await listSites(db);
@@ -120,6 +123,18 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
       {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-destructive">{error}</div>}
       {message && <div className="rounded-md bg-green-50 px-3 py-2 text-sm text-green-700">{message}</div>}
 
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">显示</h2>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={showHelp}
+            onChange={(e) => setShowHelp(e.target.checked)}
+          />
+          显示页面上的帮助图标（悬停查看说明）
+        </label>
+      </section>
+
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">网站管理</h2>
         {sites.length === 0 && (
@@ -166,7 +181,7 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
 
       <section className="space-y-3">
         <div className="flex items-center gap-3">
-          <h2 className="text-lg font-semibold">汇率维护</h2>
+          <h2 className="text-lg font-semibold">汇率维护<HelpIcon text="这里的汇率只用于订单页预估买入价；团结算的权威汇率在团页手填。" className="ml-1" /></h2>
           <Button size="sm" variant="outline" onClick={refreshRates} disabled={refreshing}>
             {refreshing ? "刷新中…" : "全部刷新"}
           </Button>
@@ -215,7 +230,7 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">备份</h2>
+        <h2 className="text-lg font-semibold">备份<HelpIcon text="只防误删误改，不防丢电脑/硬盘；建议定期把备份拷到 iCloud 或移动硬盘。" className="ml-1" /></h2>
         <Button variant="outline" onClick={backup}>立即备份</Button>
         <p className="text-sm text-muted-foreground">
           快照与数据库同目录，保留最新 2 份。只防误操作，建议定期把备份拷到 iCloud/移动硬盘。

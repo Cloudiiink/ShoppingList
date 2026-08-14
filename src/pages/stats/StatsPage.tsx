@@ -24,6 +24,7 @@ import {
   unsettledBatchCount,
 } from "@/db/stats";
 import { fenToYuan, utcToLocalMonth } from "@/db/rules";
+import { HelpIcon } from "@/components/HelpIcon";
 import type { BatchRow, OrderRow, SqlDb } from "@/db/types";
 
 export function StatsPage({ db }: { db: SqlDb }) {
@@ -98,7 +99,7 @@ export function StatsPage({ db }: { db: SqlDb }) {
     <div className="space-y-6 p-4">
       {/* 卡片 ×4 */}
       <div className="grid grid-cols-4 gap-3">
-        <Card title="本月收益（发货口径）" value={`${fenToYuan(thisMonth.profit)} 元`}>
+        <Card title="本月收益（发货口径）" value={`${fenToYuan(thisMonth.profit)} 元`} help="按发货月归属（丢失按关闭月），丢失亏损为负。">
           {thisMonth.lost !== 0 && (
             <p className="text-xs text-red-600">丢失亏损 {fenToYuan(thisMonth.lost)} 元</p>
           )}
@@ -109,10 +110,10 @@ export function StatsPage({ db }: { db: SqlDb }) {
         <Card title="待发货" value={`${pending.count} 单`}>
           {pending.count > 0 && <p className="text-xs text-muted-foreground">最早等待 {pending.oldestDays} 天</p>}
         </Card>
-        <Card title="库存占用" value={`${fenToYuan(holding.cost)} 元`}>
+        <Card title="库存占用" value={`${fenToYuan(holding.cost)} 元`} help="未售囤货的成本合计（买入价＋运费＋成本调整）。">
           <p className="text-xs text-muted-foreground">{holding.count} 件</p>
         </Card>
-        <Card title="未结算团" value={`${unsettled} 个`} />
+        <Card title="未结算团" value={`${unsettled} 个`} help="还没填汇率或还没分摊的团。" />
       </div>
 
       {/* 图表 ×2 */}
@@ -131,7 +132,7 @@ export function StatsPage({ db }: { db: SqlDb }) {
           </ResponsiveContainer>
         </section>
         <section className="rounded-lg border p-4">
-          <h3 className="mb-2 font-medium">按团收益对比（半透明 = 未分摊）</h3>
+          <h3 className="mb-2 font-medium">按团收益对比（半透明 = 未分摊）<HelpIcon text="实心＝已分摊；半透明＝未分摊（预估口径）。" className="ml-1" /></h3>
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={batchData} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" />
@@ -169,10 +170,13 @@ export function StatsPage({ db }: { db: SqlDb }) {
   );
 }
 
-function Card({ title, value, children }: { title: string; value: string; children?: React.ReactNode }) {
+function Card({ title, value, help, children }: { title: string; value: string; help?: string; children?: React.ReactNode }) {
   return (
     <div className="rounded-lg border p-4">
-      <div className="text-sm text-muted-foreground">{title}</div>
+      <div className="flex items-center gap-1 text-sm text-muted-foreground">
+        {title}
+        {help && <HelpIcon text={help} />}
+      </div>
       <div className="mt-1 text-2xl font-semibold">{value}</div>
       {children}
     </div>

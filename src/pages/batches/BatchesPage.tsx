@@ -36,6 +36,7 @@ import { CopyOrderDialog } from "@/components/CopyOrderDialog";
 import { ShipDialog } from "@/pages/orders/ShipDialog";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { listAdjustmentGroups } from "@/db/orders";
+import { HelpIcon } from "@/components/HelpIcon";
 
 const STATE_LABEL: Record<SettlementState, { text: string; className: string }> = {
   unsettled: { text: "预估", className: "text-muted-foreground" },
@@ -140,7 +141,7 @@ function BatchTable({ db, sites, batches, onOpen }: { db: SqlDb; sites: SiteRow[
           <th className="p-2">币种</th>
           <th className="p-2">订单数</th>
           <th className="p-2 text-right">外币成本合计</th>
-          <th className="p-2">结算状态</th>
+          <th className="p-2">结算状态<HelpIcon text="预估＝还没填汇率；待分摊＝填了汇率还没分摊；已分摊＝完成；待重新分摊＝分摊后又改了数据。" className="ml-1" /></th>
           <th className="p-2 text-right">收益</th>
         </tr>
       </thead>
@@ -315,15 +316,15 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
       <div className="space-y-3 rounded-lg border p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div>
-            <Label>外币成本合计</Label>
+            <Label>外币成本合计<HelpIcon text="团内所有成员单的外币成本（折后价）之和。" className="ml-1" /></Label>
             <div className="py-1 text-lg font-semibold">{fenToYuan(foreignTotal)} {batch.currency}</div>
           </div>
           <div>
-            <Label>实付总额（{batch.currency}）</Label>
+            <Label>实付总额（{batch.currency}）<HelpIcon text="实际付给商家的外币总额（结账金额）。" className="ml-1" /></Label>
             <Input className="w-36" value={checkout} onChange={(e) => setCheckout(e.target.value)} placeholder="0.00" />
           </div>
           <div>
-            <Label>结算汇率</Label>
+            <Label>结算汇率<HelpIcon text="团统一汇率，把实付总额换成人民币再分摊到各单。" className="ml-1" /></Label>
             <Input className="w-32" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="4.700000" />
           </div>
           <Button variant="outline" size="sm" onClick={saveSettlement}>保存结算信息</Button>
@@ -332,7 +333,7 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
         </div>
         <div className="flex flex-wrap gap-6 text-sm">
           <span>
-            结算差额：
+            结算差额：<HelpIcon text="外币成本合计 − 实付总额；非 0 说明有单录错或漏录。" className="mr-1" />
             {diff != null ? (
               <span className={cn(diff !== 0 && "font-semibold text-orange-600")}>
                 {fenToYuan(diff)} {batch.currency}{diff !== 0 && "（非 0，检查录单）"}
@@ -340,12 +341,12 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
             ) : "—"}
           </span>
           {batch.effective_rate != null && (
-            <span>等效汇率：{batch.effective_rate}（含折扣/批次费，仅展示）</span>
+            <span>等效汇率：<HelpIcon text="实付总额 ÷ 外币成本合计的等效汇率。" className="mr-1" />{batch.effective_rate}（含折扣/批次费，仅展示）</span>
           )}
         </div>
         <div className="flex flex-wrap gap-6 border-t pt-3 text-sm">
-          <span>团成本：<b>{fenToYuan(costTotal)}</b>{state === "allocated" ? "（实际）" : "（预估）"}</span>
-          <span>未售库存占用：<b>{fenToYuan(stockHolding)}</b></span>
+          <span>团成本：<HelpIcon text="预估＝各单买入价之和；分摊后＝实际分摊值。" className="mr-1" /><b>{fenToYuan(costTotal)}</b>{state === "allocated" ? "（实际）" : "（预估）"}</span>
+          <span>未售库存占用：<HelpIcon text="团内未售囤货的成本（资金占用，不算损益）。" className="mr-1" /><b>{fenToYuan(stockHolding)}</b></span>
           <span>
             团收益：<b>{fenToYuan(profitInfo.sum)}</b>
             {profitInfo.incomplete > 0 && (
@@ -374,6 +375,7 @@ function BatchDetail({ db, sites, batch, members, adjGroups, batches, error, set
           <>
             <Button size="sm" variant="ghost" onClick={() => setCopying(m)}>复制</Button>
             <Button size="sm" variant="ghost" onClick={() => removeMember(m)}>移出</Button>
+            <HelpIcon text="把该单移出团变散单（不删除订单）。" className="ml-1" />
           </>
         )}
         emptyText="暂无成员订单"
@@ -447,7 +449,7 @@ function AllocateDialog({ db, batch, members, open, onClose }: { db: SqlDb; batc
         <DialogHeader><DialogTitle>结算分摊 · {batch.name}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
-            <Label>模式</Label>
+            <Label>模式<HelpIcon text="按结账＝实付总额×团汇率；手动汇率＝外币成本合计×输入汇率。" className="ml-1" /></Label>
             <Select value={mode} onChange={(e) => setMode(e.target.value as "checkout" | "manual")}>
               <option value="checkout">按结账结算（实付总额 × 团汇率）</option>
               <option value="manual">手动汇率（Σ外币成本 × 输入汇率）</option>

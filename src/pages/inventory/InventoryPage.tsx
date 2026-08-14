@@ -14,6 +14,7 @@ import { listOrders, changeStatus } from "@/db/orders";
 import { listBatches } from "@/db/batches";
 import { convertStockToCustomer } from "@/db/inventory";
 import { CopyOrderDialog } from "@/components/CopyOrderDialog";
+import { HelpIcon } from "@/components/HelpIcon";
 import { canConvertStock, fenToYuan, fullCost, legalTargets, yuanToFen } from "@/db/rules";
 import { STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
@@ -73,7 +74,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
       <div className="flex items-center gap-6">
         <h2 className="text-lg font-semibold">库存</h2>
         <span className="text-sm text-muted-foreground">
-          库存总成本：<b className="text-foreground">{fenToYuan(totalCost)}</b> 元 · {active.length} 件
+          库存总成本：<b className="text-foreground">{fenToYuan(totalCost)}</b> 元 · {active.length} 件<HelpIcon text="在库＋挂单囤货的成本合计（买入价＋运费＋成本调整）与件数。" className="ml-1" />
         </span>
       </div>
       {error && <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-destructive">{error}</div>}

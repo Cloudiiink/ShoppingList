@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { fetchRate } from "@/lib/rates";
+import { HelpIcon } from "@/components/HelpIcon";
 import { getRate } from "@/db/rates";
 import { isoToLocalInput, localInputToIso } from "@/lib/time";
 import { foreignToFen, fenToYuan, yuanToFen, normRate, nowUtc, parseAdjustments } from "@/db/rules";
@@ -272,7 +273,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
         <div className="grid grid-cols-2 gap-3">
           {!order && (
             <div>
-              <Label>类型</Label>
+              <Label>类型<HelpIcon text="代购＝帮买家买（需买家微信＋卖出价，算收益）；囤货＝自己囤（进库存页）。类型不能在编辑表单里改；囤货单可在库存页「转为售出」变代购单（反向无入口）。" className="ml-1" /></Label>
               <Select value={f.order_type} onChange={(e) => set("order_type", e.target.value as OrderType)}>
                 <option value="customer">代购</option>
                 <option value="stock">囤货</option>
@@ -280,7 +281,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
             </div>
           )}
           <div className="relative">
-            <Label>商品名 *</Label>
+            <Label>商品名 *<HelpIcon text="必填。输入时联想历史商品，选中可带出默认网站与上次成本。" className="ml-1" /></Label>
             <Input value={f.product_name} onChange={(e) => onProductNameChange(e.target.value)} />
             {suggestions.length > 0 && (
               <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow-md">
@@ -297,11 +298,11 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
             )}
           </div>
           <div>
-            <Label>款式/备注</Label>
+            <Label>款式/备注<HelpIcon text="可选。区分同商品的不同规格（如 500ml）。" className="ml-1" /></Label>
             <Input value={f.product_note} onChange={(e) => set("product_note", e.target.value)} />
           </div>
           <div>
-            <Label>网站 *</Label>
+            <Label>网站 *<HelpIcon text="必选，下单来源网站。入团时网站必须与团一致。" className="ml-1" /></Label>
             <Select value={f.site_id} onChange={(e) => set("site_id", e.target.value)}>
               <option value="">选择网站</option>
               {sites.map((s) => (
@@ -310,7 +311,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
             </Select>
           </div>
           <div>
-            <Label>批次（空 = 散单）</Label>
+            <Label>批次（空 = 散单）<HelpIcon text="空 = 散单；入团必须外币成本与团币种一致，网站也要一致。" className="ml-1" /></Label>
             <Select value={f.batch_id} disabled={!!presetBatch} onChange={(e) => set("batch_id", e.target.value)}>
               <option value="">散单</option>
               {batches.map((b) => (
@@ -321,27 +322,27 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
           {f.order_type === "customer" && (
             <>
               <div>
-                <Label>买家微信 *</Label>
+                <Label>买家微信 *<HelpIcon text="代购单必填，用于识别买家。" className="ml-1" /></Label>
                 <Input value={f.buyer_wechat} onChange={(e) => set("buyer_wechat", e.target.value)} />
               </div>
               <div>
-                <Label>买家备注名</Label>
+                <Label>买家备注名<HelpIcon text="可选，方便自己识别买家。" className="ml-1" /></Label>
                 <Input value={f.buyer_alias} onChange={(e) => set("buyer_alias", e.target.value)} />
               </div>
               <div>
-                <Label>地区</Label>
+                <Label>地区<HelpIcon text="可选，记录买家所在地区。" className="ml-1" /></Label>
                 <Input value={f.region} onChange={(e) => set("region", e.target.value)} />
               </div>
             </>
           )}
           <div>
-            <Label>下单时间 *</Label>
+            <Label>下单时间 *<HelpIcon text="实际下单时间（本地时区）。补录历史单时可能与订单号日期不一致，属正常。" className="ml-1" /></Label>
             <Input type="datetime-local" value={f.ordered_at} onChange={(e) => set("ordered_at", e.target.value)} />
           </div>
 
           {/* 汇率区 */}
           <div>
-            <Label>外币原价{f.discount_rate ? "（折前）" : "（无折扣 = 实付）"}</Label>
+            <Label>外币原价{f.discount_rate ? "（折前）" : "（无折扣 = 实付）"}<HelpIcon text="商品当地币价格。有折扣时填折前价；无折扣即实付价。" className="ml-1" /></Label>
             <div className="flex gap-1">
               <Input value={f.cost_foreign} onChange={(e) => set("cost_foreign", e.target.value)} placeholder="0.00" />
               <Select className="w-24" value={f.cost_currency} disabled={!!presetBatch} onChange={(e) => set("cost_currency", e.target.value)}>
@@ -352,19 +353,19 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
             </div>
           </div>
           <div>
-            <Label>折扣率（空 = 无折扣）</Label>
+            <Label>折扣率（空 = 无折扣）<HelpIcon text="如 0.88 表示 88 折；留空 = 无折扣。折后价四舍五入到外币分。" className="ml-1" /></Label>
             <Input value={f.discount_rate} onChange={(e) => set("discount_rate", e.target.value)} placeholder="如 0.88" />
           </div>
           {f.discount_rate && costForeignMinor != null && (
             <div>
-              <Label>折后外币金额</Label>
+              <Label>折后外币金额<HelpIcon text="自动＝原价×折扣率，仅展示、不可编辑。" className="ml-1" /></Label>
               <div className="py-1 text-sm font-medium">
                 {fenToYuan(costForeignMinor)} {f.cost_currency}
               </div>
             </div>
           )}
           <div>
-            <Label>汇率</Label>
+            <Label>汇率<HelpIcon text="外币→人民币。新建单按币种从设置页预填，可「获取实时汇率」或手改；仅用于估算买入价。" className="ml-1" /></Label>
             <div className="flex gap-1">
               <Input value={f.exchange_rate} onChange={(e) => set("exchange_rate", e.target.value)} placeholder="4.700000" />
               <Button type="button" variant="outline" size="sm" className="whitespace-nowrap" disabled={rateLoading} onClick={onFetchRate}>
@@ -375,6 +376,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
           <div>
             <Label>
               买入价（元）{f.order_type === "stock" && " *"}
+              <HelpIcon text="输入外币金额与汇率后自动估算；手动改过可点「恢复自动计算」。" className="ml-1" />
               {f.buy_price_source === "manual" && (
                 <span className="ml-2 text-xs text-orange-600">已手动修改</span>
               )}
@@ -405,12 +407,12 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
           </div>
           {f.order_type === "customer" && (
             <div>
-              <Label>卖出价（元）*</Label>
+              <Label>卖出价（元）*<HelpIcon text="代购单必填，卖给买家的价格。" className="ml-1" /></Label>
               <Input value={f.sell_price} onChange={(e) => set("sell_price", e.target.value)} placeholder="0.00" />
             </div>
           )}
           <div>
-            <Label>邮费（元）</Label>
+            <Label>邮费（元）<HelpIcon text="运费（人民币），计入成本。未填会进订单页「未填邮费」提醒。" className="ml-1" /></Label>
             <Input value={f.shipping_fee} onChange={(e) => set("shipping_fee", e.target.value)} placeholder="0.00" />
           </div>
         </div>
@@ -418,7 +420,7 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
         {/* adjustments 编辑器 */}
         <div>
           <div className="mb-1 flex items-center justify-between">
-            <Label>收支调整</Label>
+            <Label>收支调整<HelpIcon text="额外成本/收入（如关税、优惠）。成本＝加成本、收入＝加收益，金额可为负。" className="ml-1" /></Label>
             <Button
               type="button"
               variant="outline"
@@ -464,13 +466,13 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
         </div>
 
         <div>
-          <Label>备注</Label>
+          <Label>备注<HelpIcon text="自由记录，任意内容。" className="ml-1" /></Label>
           <Textarea value={f.note} onChange={(e) => set("note", e.target.value)} />
         </div>
 
         {order && targets.length > 0 && (
           <div className="flex items-center gap-2">
-            <Label>变更状态（当前 {order.status}）</Label>
+            <Label>变更状态（当前 {order.status}）<HelpIcon text="编辑时可选，按状态机跳转（发货/完结/退款/丢失等）。" className="ml-1" /></Label>
             <Select className="w-48" value={targetStatus} onChange={(e) => setTargetStatus(e.target.value)}>
               <option value="">不变更</option>
               {targets.map((t) => (

@@ -8,6 +8,7 @@ import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { StatsPage } from "@/pages/stats/StatsPage";
 import { newestBackupAgeDays } from "@/lib/backupFiles";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
+import { HelpIconsProvider } from "@/lib/helpIcons";
 import { cn } from "@/lib/utils";
 import type { SiteRow, SqlDb } from "@/db/types";
 
@@ -94,29 +95,31 @@ export default function App() {
         ))}
       </nav>
       <main className="flex-1 overflow-y-auto">
-        <ConfirmDialogProvider>
-          {backupReminder && (
-            <div className="flex items-center justify-between bg-orange-50 px-4 py-2 text-sm text-orange-700">
-              <span>{backupReminder}</span>
-              <button onClick={() => setBackupReminder(null)}>知道了</button>
-            </div>
-          )}
-          {page === "订单" ? (
-            <OrdersPage db={state.db} sites={state.sites} />
-          ) : page === "团" ? (
-            <BatchesPage db={state.db} sites={state.sites} />
-          ) : page === "库存" ? (
-            <InventoryPage db={state.db} sites={state.sites} />
-          ) : page === "设置" ? (
-            <SettingsPage db={state.db} onSitesChanged={onSitesChanged} />
-          ) : page === "统计" ? (
-            <StatsPage db={state.db} />
-          ) : (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              {page}页将在 {PAGE_TICKET[page]} 实现
-            </div>
-          )}
-        </ConfirmDialogProvider>
+        <HelpIconsProvider>
+          <ConfirmDialogProvider>
+            {backupReminder && (
+              <div className="flex items-center justify-between bg-orange-50 px-4 py-2 text-sm text-orange-700">
+                <span>{backupReminder}</span>
+                <button onClick={() => setBackupReminder(null)}>知道了</button>
+              </div>
+            )}
+            {page === "订单" ? (
+              <OrdersPage db={state.db} sites={state.sites} />
+            ) : page === "团" ? (
+              <BatchesPage db={state.db} sites={state.sites} />
+            ) : page === "库存" ? (
+              <InventoryPage db={state.db} sites={state.sites} />
+            ) : page === "设置" ? (
+              <SettingsPage db={state.db} onSitesChanged={onSitesChanged} />
+            ) : page === "统计" ? (
+              <StatsPage db={state.db} />
+            ) : (
+              <div className="flex h-full items-center justify-center text-muted-foreground">
+                {page}页将在 {PAGE_TICKET[page]} 实现
+              </div>
+            )}
+          </ConfirmDialogProvider>
+        </HelpIconsProvider>
       </main>
     </div>
   );
