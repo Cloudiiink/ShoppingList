@@ -448,7 +448,7 @@ canonical_profit(order): ProfitResult
 - 提醒条：「有 N 条订单未填邮费」（**仅统计进行中单**）
 - 行尾操作：编辑、标记发货、完结、退款、丢失、转售出（囤货单）、**复制**、删除
 - **标记发货弹窗**：快递单号（可空）+ 邮费 → 确认写 `shipped_at` + `tracking_no`（前置硬校验 buy_price 已填）
-- **一键复制（issue #11）**：订单页/库存页行内「复制」→ 弹窗输份数（默认 1，上限 20）→ 用源单商品/成本信息建 N 条新囤货单（stock/in_stock，各自新订单号）；customer 单复制即转囤货单。保留：商品/网站/买入价/外币/汇率/成本侧 adjustments/备注；清空：买家四件套/卖出价/运费/快递单号/履约时间戳；batch_id 仅团未结算才保留（batch_allocated 降级 manual）；源单缺 buy_price_cny 禁止复制并提示先补成本；实现复用 `createOrder` 逐条创建（继承全部校验与连号）
+- **一键复制（issue #11 → #15 全量）**：订单页/库存页/团详情成员行内「复制」→ 弹窗输份数（默认 1，上限 20）→ 用源单全字段建 N 条新单（保留 order_type，代购还是代购、囤货还是囤货，各自新订单号）。保留：全部业务字段（买家四件套/卖出价/运费/快递单号/外币/折扣/汇率/全部 adjustments/备注/reserved_at/ordered_at）；重置：id、order_no（连号）、status（类型初始态）、shipped_at/closed_at/converted_from_stock_at（null）、时间戳；batch_id 一律照搬（含已结算团，后果 = 已分摊团变待重新分摊）；buy_price_source=batch_allocated 降级 manual（副本尚未分摊）；实现复用 `createOrder` 逐条创建（继承全部校验与连号）
 - 新建/编辑表单：
   - 批次下拉（可空 = 散单）；从团详情「+ 加订单」进入时自动带 batch_id / site / 币种锁定；挂散单入团校验 site 与币种一致
   - 状态下拉只列转移矩阵中的合法目标
@@ -556,7 +556,9 @@ canonical_profit(order): ProfitResult
 | 原生 JS 弹窗禁用（issue #10 Bug 3） | **Tauri macOS 的 WKWebView 不实现 alert/confirm/prompt**（no-op 返回 undefined），`if(!confirm())return` 会静默拦截。一律用应用内对话框：`components/ConfirmDialog.tsx` 的 `useConfirm()`（Promise 化确认框，挂 ConfirmDialogProvider），代码中禁止出现原生 confirm/alert |
 | 库存金额口径（issue #11） | 库存页总成本/每行成本 + §5.4 团口径「未售库存占用」统一改用 `fullCost`（buy_price_cny + shipping_fee + Σcost调整），与收益计算同口径，实现仍唯一于 rules.ts |
 | 订单折扣录入（issue #12） | **折扣作用于外币成本**：表单输入折前原价 + 折扣率（小数如 0.88），自动算折后价；`cost_foreign_amount` 恒存折后真实支付价（汇率联动/团分摊/收益计算零改动）；迁移 v3 加 `discount_rate`（CHECK 0<rate≤1）+ `original_foreign_amount` 两列，同生同灭由 validate() 强制（ALTER 无法补跨列 CHECK）；存量单两列 NULL；复制随副本继承；仅编辑表单回显，列表不加标记。**舍入规则**：折后价 = 原价 × 折扣率，四舍五入到外币最小单位（分）；折扣两列计入 SETTLEMENT_FIELDS（折扣变更 = 成本语义变更，刷新 settlement_updated_at 触发待重新分摊检测） |
-| 团内复制入口（issue #13） | 团详情成员行加「复制」按钮，**复用「复制为囤货单」语义零改动**（未结算团保留 batch_id = 同团囤货副本；已结算团降级散单 + batch_allocated→manual）；CopyOrderDialog 对已结算团源单明示「副本将落为散单」，避免"点了没反应"的错觉 |
+| 团内复制入口（issue #13 → #15 全量） | 团详情成员行加「复制」按钮，**复用「全量复制」语义零改动**（batch_id 照搬入原团；已分摊团因此变待重新分摊） |
 | 汇率集中维护（issue #11） | 新增 rates 表：固定 3 行（AUD/USD/HKD，币种仍是写死枚举，新增币种走代码变更），设置区手填 + 「全部刷新」按钮调实时接口；OrderForm 选币种后从表静默预填（无记录则清空），保留表单内实时获取按钮兜底；estimated 联动逻辑不变 |
-| 订单一键复制（issue #11） | **复制 = 用源单商品/成本信息建 N 条新囤货单**（stock/in_stock，customer 单复制即转囤货）：弹窗输份数（默认 1，上限 20）；order_no 逐条走 createOrder 连号生成；买家四件套+sell_price+shipping_fee+tracking_no+履约时间戳一律清空；adjustments 只留 kind=cost；batch_id 仅团未结算才保留（batch_allocated 降级 manual）；缺 buy_price_cny 禁止复制并提示先补成本 |
+| 订单一键复制（issue #11 → #15 全量） | **复制 = 全量克隆**：保留全部业务字段（类型/买家/卖出价/运费/快递单号/全部 adjustments/备注/折扣/ordered_at），仅重置主键、order_no（连号）、状态（类型初始态）、履约时间戳（shipped_at/closed_at/converted_from_stock_at）；batch_id 一律照搬（已结算团也照搬，后果 = 待重新分摊）；buy_price_source=batch_allocated 降级 manual；不再「customer 转囤货」、不再清买家/售价、不再丢 revenue 调整 |
+| 买入价恢复自动计算（issue #14） | 订单表单「买入价」手改后（buy_price_source=manual）在输入框旁显示「恢复自动计算」按钮，点击置回 estimated 并由汇率联动重算；batch_allocated 不纳入（属团结算冻结值，仅重分摊/手改降级可改） |
+| 订单类型创建后不可修改（issue #16） | 采用方案 A：不做通用类型编辑（编辑表单仍隐藏「类型」下拉）；复制保留原类型（#15），stock→customer 走库存页「转为售出」；customer→stock 无直接入口，如需囤货直接新建囤货单 |
 | 锁错误自愈（issue #10 后续，e2e 排查产物） | **根因（CI 取证）**：sqlx 归还连接走 Rust 异步任务，下一条语句的 acquire 可能抢在归还完成前 → 池膨胀 → FIFO 空闲队列把手工 BEGIN…COMMIT 的语句轮转到不同连接（WAL 下报 database is locked / no such table）。**防御三层**：①所有写事务（createOrder/shipOrder/转售出/删团/分摊/migrate）打成**单 execute 多语句批量**（`db/transaction.ts` executeBatch；sqlx-sqlite 单连接顺序执行整串，一次 acquire 完成整个事务）；②serialize 外壳每语句 1ms 间隙，让归还任务先完成、池保持单连接；③withLockRetry 退避重放 + 持续锁 recoverPool 关池重建兜底；启动序列另有 ROLLBACK 清悬挂事务 + 重试 |

@@ -15,7 +15,7 @@ import {
   statusChangePatch,
 } from "./rules";
 import type { Adjustment } from "./rules";
-import { assertBatchMembership, getBatch, isBatchSettled } from "./batches";
+import { assertBatchMembership } from "./batches";
 import { executeBatch } from "./transaction";
 
 /** 创建/编辑订单的输入 */
@@ -197,14 +197,15 @@ export async function getOrder(db: SqlDb, id: number): Promise<OrderRow> {
 export const MAX_COPY_COUNT = 20;
 
 /**
- * 一键复制（issue #11）：用源单的商品/成本信息建 count 条新囤货单（stock/in_stock）。
- * customer 单复制即转囤货单。逐条走 createOrder，继承全部校验/CHECK/入团闸/连号。
+ * 一键复制（全量，issue #15）：用源单全字段建 count 条新单，保留 order_type
+ * （代购还是代购、囤货还是囤货）。逐条走 createOrder，继承全部校验/CHECK/入团闸/连号。
  * 注意：逐条独立事务，**非原子**——中途失败会留下已创建的部分副本（份数 ≤20，风险可接受）。
- * 清空：买家四件套、卖出价、运费、快递单号；adjustments 只留 kind=cost；
- * 折扣信息（discount_rate + 折前原价）随副本继承（issue #12）；
- * batch_id 仅团未结算才保留（batch_allocated 必已结算 → 降级 manual 并记散单）。
+ * 保留：全部业务字段（买家四件套/卖出价/运费/快递单号/全部 adjustments/备注/折扣/reserved_at/ordered_at）；
+ * 重置：id、order_no（连号）、status（createOrder 给类型初始态）、shipped_at/closed_at/converted_from_stock_at（null）、时间戳。
+ * batch_id 一律照搬（含已结算团，后果 = 已分摊团变待重新分摊）；
+ * buy_price_source = batch_allocated 降级 manual（副本尚未分摊）。
  */
-export async function copyOrdersAsStock(
+export async function copyOrders(
   db: SqlDb,
   sourceId: number,
   count: number
@@ -213,23 +214,19 @@ export async function copyOrdersAsStock(
     throw new Error(`份数必须是 1-${MAX_COPY_COUNT} 的整数`);
   }
   const src = await getOrder(db, sourceId);
-  if (src.buy_price_cny === null) {
-    throw new Error("该单尚未补成本，无法复制为囤货单，请先补成本");
-  }
-
-  let batchId: number | null = null;
-  if (src.batch_id !== null) {
-    const b = await getBatch(db, src.batch_id);
-    if (!isBatchSettled(b)) batchId = b.id; // 未结算才保留
-  }
 
   const input: OrderInput = {
-    order_type: "stock",
+    order_type: src.order_type,
     product_name: src.product_name,
     product_note: src.product_note,
     site_id: src.site_id,
-    batch_id: batchId,
+    batch_id: src.batch_id,
+    buyer_wechat: src.buyer_wechat,
+    buyer_alias: src.buyer_alias,
+    region: src.region,
     reserved_at: src.reserved_at,
+    ordered_at: src.ordered_at,
+    tracking_no: src.tracking_no,
     cost_foreign_amount: src.cost_foreign_amount,
     cost_currency: src.cost_currency,
     discount_rate: src.discount_rate,
@@ -237,7 +234,9 @@ export async function copyOrdersAsStock(
     exchange_rate: src.exchange_rate,
     buy_price_cny: src.buy_price_cny,
     buy_price_source: src.buy_price_source === "batch_allocated" ? "manual" : src.buy_price_source,
-    adjustments: parseAdjustments(src.adjustments).filter((a) => a.kind === "cost"),
+    sell_price_cny: src.sell_price_cny,
+    shipping_fee: src.shipping_fee,
+    adjustments: parseAdjustments(src.adjustments),
     note: src.note,
   };
 

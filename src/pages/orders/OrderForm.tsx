@@ -382,13 +382,26 @@ export function OrderForm({ db, sites, batches, adjustmentGroups, order, presetB
                 <span className="ml-2 text-xs text-blue-600">团分摊</span>
               )}
             </Label>
-            <Input
-              value={f.buy_price}
-              onChange={(e) => {
-                setF((prev) => ({ ...prev, buy_price: e.target.value, buy_price_source: "manual" }));
-              }}
-              placeholder="0.00"
-            />
+            <div className="flex gap-1">
+              <Input
+                value={f.buy_price}
+                onChange={(e) => {
+                  setF((prev) => ({ ...prev, buy_price: e.target.value, buy_price_source: "manual" }));
+                }}
+                placeholder="0.00"
+              />
+              {f.buy_price_source === "manual" && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="whitespace-nowrap"
+                  onClick={() => set("buy_price_source", "estimated")}
+                >
+                  恢复自动计算
+                </Button>
+              )}
+            </div>
           </div>
           {f.order_type === "customer" && (
             <div>

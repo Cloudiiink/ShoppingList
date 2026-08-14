@@ -62,6 +62,31 @@ describe("OrderForm", () => {
     });
   });
 
+  it("手改买入价后可一键恢复自动计算（issue #14）", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.type(field(/外币原价/), "100");
+    await user.type(field("汇率"), "5");
+    await waitFor(() => {
+      expect((field(/买入价/) as HTMLInputElement).value).toBe("500.00");
+    });
+
+    // 手改 → manual，出现「恢复自动计算」按钮
+    const buy = field(/买入价/) as HTMLInputElement;
+    await user.clear(buy);
+    await user.type(buy, "300");
+    expect((field(/买入价/) as HTMLInputElement).value).toBe("300");
+    const restore = await screen.findByRole("button", { name: "恢复自动计算" });
+
+    // 点击恢复 → estimated 重算，按钮消失
+    await user.click(restore);
+    await waitFor(() => {
+      expect((field(/买入价/) as HTMLInputElement).value).toBe("500.00");
+    });
+    expect(screen.queryByRole("button", { name: "恢复自动计算" })).toBeNull();
+  });
+
   it("编辑：回显已有订单，修改卖出价后保存落库", async () => {
     const created = await createOrder(db, {
       order_type: "customer",

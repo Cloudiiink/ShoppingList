@@ -5,7 +5,7 @@ import { renderWithConfirm } from "@/test/render";
 import userEvent from "@testing-library/user-event";
 import { BatchesPage } from "./BatchesPage";
 import { createBatch, updateBatch, listMembers } from "@/db/batches";
-import { createOrder, getOrder, listOrders } from "@/db/orders";
+import { createOrder, getOrder } from "@/db/orders";
 import { listSites } from "@/db/sites";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
@@ -118,9 +118,9 @@ describe("BatchesPage", () => {
     });
   });
 
-  it("团内复制（issue #13）：未结算团成员行「复制」→ 副本为同团囤货单", async () => {
+  it("团内复制（issue #15）：未结算团成员行「复制」→ 副本为同团代购单（类型/买家保留）", async () => {
     const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
-    await createOrder(db, {
+    const src = await createOrder(db, {
       order_type: "customer",
       product_name: "团内商品",
       site_id: sites[0]!.id,
@@ -140,18 +140,20 @@ describe("BatchesPage", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "确认复制" }));
 
-    // 副本保留 batch_id（团未结算）→ 成员数 2，副本为 stock/in_stock
+    // 副本照搬入团 → 成员数 2，副本仍为 customer、买家保留
     expect(await screen.findByText("成员订单（2）")).toBeInTheDocument();
     const ms = await listMembers(db, batch.id);
-    const copy = ms.find((m) => m.order_type === "stock");
+    const copy = ms.find((m) => m.id !== src.id);
     expect(copy).toBeDefined();
-    expect(copy!.status).toBe("in_stock");
-    expect(copy!.buyer_wechat).toBeNull();
+    expect(copy!.order_type).toBe("customer");
+    expect(copy!.status).toBe("paid_pending_ship");
+    expect(copy!.buyer_wechat).toBe("wx1");
+    expect(copy!.batch_id).toBe(batch.id);
   });
 
-  it("团内复制（issue #13）：已结算团源单弹窗明示「副本落散单」", async () => {
+  it("团内复制（issue #15）：已结算团源单副本照搬入团，成员数 +1", async () => {
     const batch = await createBatch(db, { name: "202608-JAYD 一团", site_id: sites[0]!.id, currency: "AUD" });
-    await createOrder(db, {
+    const src = await createOrder(db, {
       order_type: "customer",
       product_name: "团内商品",
       site_id: sites[0]!.id,
@@ -170,21 +172,18 @@ describe("BatchesPage", () => {
     await user.click(await screen.findByText("202608-JAYD 一团"));
     await user.click(await screen.findByRole("button", { name: "复制" }));
     const dialog = await screen.findByRole("dialog");
-    expect(
-      await within(dialog).findByText(/副本将落为散单囤货/)
-    ).toBeInTheDocument();
+    expect(await within(dialog).findByText(/复制订单/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "确认复制" }));
 
-    // 副本落散单：团成员数不变，新单是散单囤货
+    // 副本照搬入团（不再落散单）→ 成员数 2
     await waitFor(async () => {
-      expect(await listMembers(db, batch.id)).toHaveLength(1);
+      expect(await listMembers(db, batch.id)).toHaveLength(2);
     });
-    const all = await listOrders(db);
-    const copy = all.find((o) => o.order_type === "stock");
+    const copy = (await listMembers(db, batch.id)).find((m) => m.id !== src.id);
     expect(copy).toBeDefined();
-    expect(copy!.batch_id).toBeNull();
-    // 源单是 estimated，副本原样继承（batch_allocated → manual 的降级由 copy.test.ts 覆盖）
-    expect(copy!.buy_price_source).toBe("estimated");
+    expect(copy!.batch_id).toBe(batch.id);
+    expect(copy!.order_type).toBe("customer");
+    expect(copy!.buyer_wechat).toBe("wx1");
   });
 
   it("删除团：ConfirmDialog 确认后团删除、成员变散单（issue #10 Bug 3 回归）", async () => {

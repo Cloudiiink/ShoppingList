@@ -83,7 +83,7 @@ describe("InventoryPage", () => {
     render(<InventoryPage db={db} sites={sites} />);
 
     await user.click(await screen.findByRole("button", { name: "复制" }));
-    expect(await screen.findByText(/复制为囤货单/)).toBeInTheDocument();
+    expect(await screen.findByText(/复制订单/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "确认复制" }));
 
     await waitFor(async () => {
