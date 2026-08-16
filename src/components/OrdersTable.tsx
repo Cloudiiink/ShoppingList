@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { canonicalProfit, fenToYuan, legalTargets, IN_PROGRESS_STATUSES } from "@/db/rules";
-import { SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
+import { ACTION_LABEL, ORDER_TYPE_LABEL, SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow } from "@/db/types";
@@ -16,17 +16,6 @@ const ROW_COLOR: Partial<Record<OrderStatus, string>> = {
   lost: "bg-red-200",
   in_stock: "bg-purple-100",
   listed: "bg-purple-50",
-};
-
-const ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
-  shipped: "标记发货",
-  done: "完结",
-  refunded: "退款",
-  lost: "丢失",
-  paid_pending_ship: "回退待发货",
-  in_stock: "下架/回在库",
-  listed: "挂单",
-  consumed: "自用",
 };
 
 interface Props {
@@ -104,7 +93,7 @@ export function OrdersTable({
           return (
             <tr key={o.id} className={cn("border-b", ROW_COLOR[o.status])}>
               <td className="p-2 font-mono text-xs">{o.order_no}</td>
-              <td className="p-2">{o.order_type === "customer" ? "代购" : "囤货"}</td>
+              <td className="p-2">{ORDER_TYPE_LABEL[o.order_type]}</td>
               <td className="p-2">{o.product_name}</td>
               <td className="p-2">{o.buyer_alias || o.buyer_wechat || ""}</td>
               <td className="p-2">{siteName(o.site_id)}</td>

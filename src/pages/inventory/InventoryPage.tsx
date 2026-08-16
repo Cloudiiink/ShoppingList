@@ -1,24 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { listOrders, changeStatus } from "@/db/orders";
+import { listOrders, listAdjustmentGroups, changeStatus } from "@/db/orders";
 import { listBatches } from "@/db/batches";
-import { convertStockToCustomer } from "@/db/inventory";
 import { CopyOrderDialog } from "@/components/CopyOrderDialog";
 import { HelpIcon } from "@/components/HelpIcon";
-import { canConvertStock, fenToYuan, fullCost, legalTargets, yuanToFen } from "@/db/rules";
-import { STATUS_LABEL } from "@/lib/labels";
+import { canConvertStock, fenToYuan, fullCost, legalTargets } from "@/db/rules";
+import { ACTION_LABEL, STATUS_LABEL } from "@/lib/labels";
 import { isoToLocalDate } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { OrderForm } from "@/pages/orders/OrderForm";
 import type { BatchRow, OrderRow, OrderStatus, SiteRow, SqlDb } from "@/db/types";
 
 const ROW_COLOR: Partial<Record<OrderStatus, string>> = {
@@ -27,27 +17,23 @@ const ROW_COLOR: Partial<Record<OrderStatus, string>> = {
   lost: "bg-red-200",
 };
 
-const ACTION_LABEL: Partial<Record<OrderStatus, string>> = {
-  listed: "挂单",
-  in_stock: "下架",
-  consumed: "自用",
-  lost: "丢失",
-};
-
 export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [batches, setBatches] = useState<BatchRow[]>([]);
+  const [adjustmentGroups, setAdjustmentGroups] = useState<string[]>([]);
   const [converting, setConverting] = useState<OrderRow | null>(null);
   const [copying, setCopying] = useState<OrderRow | null>(null);
   const [error, setError] = useState("");
 
   const reload = useCallback(async () => {
-    const [os, bs] = await Promise.all([
+    const [os, bs, ag] = await Promise.all([
       listOrders(db, { status: ["in_stock", "listed", "consumed", "lost"] }),
       listBatches(db),
+      listAdjustmentGroups(db),
     ]);
     setOrders(os.filter((o) => o.order_type === "stock"));
     setBatches(bs);
+    setAdjustmentGroups(ag);
   }, [db]);
 
   useEffect(() => {
@@ -113,7 +99,7 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
                     <Button size="sm" variant="ghost" onClick={() => setCopying(o)}>复制</Button>
                     {targets.map((t) => (
                       <Button key={t} size="sm" variant="ghost" onClick={() => doAction(o, t)}>
-                        {ACTION_LABEL[t] ?? t}
+                        {ACTION_LABEL[t] ?? STATUS_LABEL[t]}
                       </Button>
                     ))}
                   </div>
@@ -127,84 +113,17 @@ export function InventoryPage({ db, sites }: { db: SqlDb; sites: SiteRow[] }) {
         </tbody>
       </table>
 
-      <ConvertDialog db={db} batches={batches} order={converting} onClose={(done) => { setConverting(null); if (done) reload(); }} />
+      <OrderForm
+        db={db}
+        sites={sites}
+        batches={batches}
+        adjustmentGroups={adjustmentGroups}
+        order={converting}
+        convertShortcut
+        open={converting != null}
+        onClose={(done) => { setConverting(null); if (done) reload(); }}
+      />
       <CopyOrderDialog db={db} order={copying} onClose={(done) => { setCopying(null); if (done) reload(); }} />
     </div>
-  );
-}
-
-function ConvertDialog({ db, batches, order, onClose }: { db: SqlDb; batches: BatchRow[]; order: OrderRow | null; onClose: (done: boolean) => void }) {
-  const [wechat, setWechat] = useState("");
-  const [alias, setAlias] = useState("");
-  const [region, setRegion] = useState("");
-  const [sellPrice, setSellPrice] = useState("");
-  const [batchId, setBatchId] = useState("");
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (order) {
-      setWechat(""); setAlias(""); setRegion(""); setSellPrice("");
-      setBatchId(order.batch_id != null ? String(order.batch_id) : "");
-      setError("");
-    }
-  }, [order]);
-
-  if (!order) return null;
-
-  async function confirm() {
-    setError("");
-    try {
-      await convertStockToCustomer(db, order!.id, {
-        buyer_wechat: wechat,
-        sell_price_cny: sellPrice ? yuanToFen(sellPrice) : null,
-        buyer_alias: alias.trim() || null,
-        region: region.trim() || null,
-        batch_id: batchId ? Number(batchId) : null,
-      });
-      onClose(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  return (
-    <Dialog open={order != null} onOpenChange={(o) => !o && onClose(false)}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>转为售出 · {order.product_name}</DialogTitle></DialogHeader>
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            成本 {order.buy_price_cny != null ? fenToYuan(order.buy_price_cny) : "—"} 元 · 购买日 {isoToLocalDate(order.ordered_at)}（均锁定不变）
-          </p>
-          <div>
-            <Label>买家微信 *</Label>
-            <Input value={wechat} onChange={(e) => setWechat(e.target.value)} />
-          </div>
-          <div>
-            <Label>卖出价（元）*</Label>
-            <Input value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} placeholder="0.00" />
-          </div>
-          <div>
-            <Label>买家备注名</Label>
-            <Input value={alias} onChange={(e) => setAlias(e.target.value)} />
-          </div>
-          <div>
-            <Label>地区</Label>
-            <Input value={region} onChange={(e) => setRegion(e.target.value)} />
-          </div>
-          <div>
-            <Label>批次</Label>
-            <Select value={batchId} onChange={(e) => setBatchId(e.target.value)}>
-              <option value="">散单</option>
-              {batches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </Select>
-          </div>
-        </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onClose(false)}>取消</Button>
-          <Button onClick={confirm} disabled={!wechat.trim() || !sellPrice}>确认转售出</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

@@ -1,4 +1,4 @@
-import { appConfigDir } from "@tauri-apps/api/path";
+import { appConfigDir, join } from "@tauri-apps/api/path";
 import { readDir, remove, stat } from "@tauri-apps/plugin-fs";
 import { BaseDirectory } from "@tauri-apps/plugin-fs";
 import {
@@ -38,7 +38,8 @@ export async function newestBackupAgeDays(): Promise<number | null> {
 export async function doBackup(db: SqlDb): Promise<string> {
   const dir = await appConfigDir();
   const name = backupFileName(new Date());
-  const abs = `${dir}${name}`;
+  // appConfigDir() 返回的路径不带结尾分隔符，必须用 join 拼接
+  const abs = await join(dir, name);
 
   await createSnapshot(db, abs);
   try {

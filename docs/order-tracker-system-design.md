@@ -300,7 +300,7 @@ ALTER TABLE orders ADD COLUMN original_foreign_amount INTEGER;  -- 折前外币�
 | stock | `in_stock` | `listed` / `consumed` / `lost` |
 | stock | `listed` | `in_stock` / `consumed` / `lost` |
 | stock | `consumed` / `lost` | `in_stock`（纠错回退） |
-| stock → customer | — | 禁止直接改状态；只能走「转售出」动作（单事务） |
+| stock ⇄ customer | — | 矩阵内禁止跨类型跳变；类型切换走 `changeOrderType`（`db/orders.ts` 单入口，双向），状态重置为 `INITIAL_STATUS` |
 
 **两道闸（如实描述）**：① **转移闸** = 数据层 `canTransition(type, from, to)` 前置校验（`db/rules.ts` 唯一实现），UI 下拉只列合法目标——所有写路径被 `src/db/` 铁律收敛，此闸必然经过；② **枚举域 CHECK** = 建表约束，只校验 status 是类型内合法枚举值（防绕过 db/ 模块的手写 SQL 写坏数据），**不校验跳变合法性**（SQLite CHECK 看不到旧行值，不引入触发器以避免转移矩阵双份真源）：
 
@@ -456,6 +456,7 @@ canonical_profit(order): ProfitResult
   - **adjustments 编辑器**：动态行（kind 切换 成本/收入，默认成本 + 分组联想历史值 + 金额可负 + 备注），负数行绿色，底部实时合计；分组+金额必填，空行提交时丢弃
   - 商品名联想 → 选中带出网站和上次成本（products upsert）
   - 必填：代购 = 买家微信 + 网站 + 商品名 + 下单时间 + 卖出价；囤货 = 网站 + 商品名 + 下单时间 + 买入价
+  - **类型可双向切换**（新建与编辑均可）：统一表单恒渲染全部字段，切到囤货时买家/卖出价清空禁用、买入价必填；切到代购时需买家+卖出价。编辑态切换前弹确认框（列出将清空的字段），保存时走 `changeOrderType` 清空对侧字段并把状态重置为 `INITIAL_STATUS`（校验仍在 db 层 save 时执行）
 
 ### 6.2 团页
 
@@ -467,7 +468,7 @@ canonical_profit(order): ProfitResult
 
 - 显示 `stock` 单：in_stock 紫 / listed 浅紫
 - 统计：库存总成本（fullCost 口径：buy_price + 运费 + Σcost调整）、件数
-- **转为售出**：合法来源 = `in_stock` / `listed` / `consumed`（自用后又卖掉的真实场景）；`lost` 不可转（找回需先按矩阵回退 in_stock）。弹补填表单（买家微信 + 卖出价必填，alias/region/batch 可改，成本与购买日锁定）；提交单事务：清 `closed_at`（consumed 时有值）→ `order_type→customer`、`status→paid_pending_ship`、写 `converted_from_stock_at`
+- **转为售出**（快捷入口）：合法来源 = `in_stock` / `listed` / `consumed`（自用后又卖掉的真实场景）；`lost` 不可转（找回需先按矩阵回退 in_stock）。点击打开统一 OrderForm（`convertShortcut` 预置为代购单，类型/成本块/下单时间锁定，买家微信 + 卖出价必填，alias/region/batch 可改）；保存走 `changeOrderType`：清 `closed_at`（consumed 时有值）→ `order_type→customer`、`status→paid_pending_ship`、写 `converted_from_stock_at`
 
 ### 6.4 统计页
 
@@ -560,5 +561,5 @@ canonical_profit(order): ProfitResult
 | 汇率集中维护（issue #11） | 新增 rates 表：固定 3 行（AUD/USD/HKD，币种仍是写死枚举，新增币种走代码变更），设置区手填 + 「全部刷新」按钮调实时接口；OrderForm 选币种后从表静默预填（无记录则清空），保留表单内实时获取按钮兜底；estimated 联动逻辑不变 |
 | 订单一键复制（issue #11 → #15 全量） | **复制 = 全量克隆**：保留全部业务字段（类型/买家/卖出价/运费/快递单号/全部 adjustments/备注/折扣/ordered_at），仅重置主键、order_no（连号）、状态（类型初始态）、履约时间戳（shipped_at/closed_at/converted_from_stock_at）；batch_id 一律照搬（已结算团也照搬，后果 = 待重新分摊）；buy_price_source=batch_allocated 降级 manual；不再「customer 转囤货」、不再清买家/售价、不再丢 revenue 调整 |
 | 买入价恢复自动计算（issue #14） | 订单表单「买入价」手改后（buy_price_source=manual）在输入框旁显示「恢复自动计算」按钮，点击置回 estimated 并由汇率联动重算；batch_allocated 不纳入（属团结算冻结值，仅重分摊/手改降级可改） |
-| 订单类型创建后不可修改（issue #16） | 采用方案 A：不做通用类型编辑（编辑表单仍隐藏「类型」下拉）；复制保留原类型（#15），stock→customer 走库存页「转为售出」；customer→stock 无直接入口，如需囤货直接新建囤货单 |
+| 订单类型双向切换（issue #16 修订） | **统一表单 + 双向切换**：`order_type` 在新建与编辑时都可切换；表单恒渲染全部字段，无关字段（囤货单的买家微信/买家备注名/地区/卖出价）清空+禁用。切换类型在保存时经 `db/orders.ts` 的 `changeOrderType`（单 UPDATE 原子，取代单向 `convertStockToCustomer`，删除 `db/inventory.ts`）：stock→customer 需买家+卖出价、写 `converted_from_stock_at`、成本/购买日/买入价锁定；customer→stock 清买家/卖出价/快递单号/发货/完结/转售出时间戳、需买入价；两方向均把状态重置为 `INITIAL_STATUS`（paid_pending_ship / in_stock），`shipped_at`/`closed_at` 一律清空；`settlement_updated_at` 每次切换刷新（类型翻转改变 canonical_profit 分类，团需重新分摊检测）；`batch_id` 原样保留并重新断言成员不变量；lost 囤货转代购仍被 `canConvertStock` 拒绝。库存页「转售出」保留为快捷入口 = 打开 OrderForm（`convertShortcut` 预置代购 + 锁成本块与下单时间） |
 | 锁错误自愈（issue #10 后续，e2e 排查产物） | **根因（CI 取证）**：sqlx 归还连接走 Rust 异步任务，下一条语句的 acquire 可能抢在归还完成前 → 池膨胀 → FIFO 空闲队列把手工 BEGIN…COMMIT 的语句轮转到不同连接（WAL 下报 database is locked / no such table）。**防御三层**：①所有写事务（createOrder/shipOrder/转售出/删团/分摊/migrate）打成**单 execute 多语句批量**（`db/transaction.ts` executeBatch；sqlx-sqlite 单连接顺序执行整串，一次 acquire 完成整个事务）；②serialize 外壳每语句 1ms 间隙，让归还任务先完成、池保持单连接；③withLockRetry 退避重放 + 持续锁 recoverPool 关池重建兜底；启动序列另有 ROLLBACK 清悬挂事务 + 重试 |

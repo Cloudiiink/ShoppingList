@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   createOrder,
   updateOrder,
+  changeOrderType,
   changeStatus,
   deleteOrder,
   getOrder,
@@ -9,6 +10,7 @@ import {
   nextOrderNo,
   shipOrder,
 } from "./orders";
+import { createBatch } from "./batches";
 import { freshDb, seedSites } from "./testUtils";
 import type { SqlDb } from "./types";
 
@@ -288,5 +290,137 @@ describe("折扣字段（issue #12）", () => {
     });
     expect(cleared.discount_rate).toBeNull();
     expect(cleared.original_foreign_amount).toBeNull();
+  });
+});
+
+describe("changeOrderType（双向类型切换）", () => {
+  const stockInput = {
+    order_type: "stock" as const,
+    product_name: "囤货商品",
+    site_id: 1,
+    buy_price_cny: 2000,
+  };
+
+  it("stock→customer：in_stock 可转，写 converted_from_stock_at，成本/购买日锁定", async () => {
+    const s = await createOrder(db, stockInput);
+    const c = await changeOrderType(db, s.id, "customer", {
+      buyer_wechat: "wx999",
+      sell_price_cny: 3500,
+    });
+    expect(c.order_type).toBe("customer");
+    expect(c.status).toBe("paid_pending_ship");
+    expect(c.buyer_wechat).toBe("wx999");
+    expect(c.sell_price_cny).toBe(3500);
+    expect(c.converted_from_stock_at).not.toBeNull();
+    expect(c.buy_price_cny).toBe(2000);
+    expect(c.ordered_at).toBe(s.ordered_at);
+  });
+
+  it("stock→customer：listed / consumed 可转，consumed 清 closed_at", async () => {
+    const listed = await createOrder(db, stockInput);
+    await changeStatus(db, listed.id, "listed");
+    const c1 = await changeOrderType(db, listed.id, "customer", {
+      buyer_wechat: "wx",
+      sell_price_cny: 3000,
+    });
+    expect(c1.status).toBe("paid_pending_ship");
+
+    const consumed = await createOrder(db, stockInput);
+    await changeStatus(db, consumed.id, "consumed");
+    const c2 = await changeOrderType(db, consumed.id, "customer", {
+      buyer_wechat: "wx",
+      sell_price_cny: 3000,
+    });
+    expect(c2.closed_at).toBeNull();
+    expect(c2.order_type).toBe("customer");
+  });
+
+  it("stock→customer：lost 拒绝（需先回退）", async () => {
+    const s = await createOrder(db, stockInput);
+    await changeStatus(db, s.id, "lost");
+    await expect(
+      changeOrderType(db, s.id, "customer", { buyer_wechat: "wx", sell_price_cny: 3000 })
+    ).rejects.toThrow(/lost|回退/);
+  });
+
+  it("同类型调用拒绝", async () => {
+    const s = await createOrder(db, stockInput);
+    await expect(changeOrderType(db, s.id, "stock", {})).rejects.toThrow(/无需切换|已是/);
+  });
+
+  it("stock→customer 缺买家/卖出价拒绝", async () => {
+    const s = await createOrder(db, stockInput);
+    await expect(
+      changeOrderType(db, s.id, "customer", { buyer_wechat: "", sell_price_cny: 3000 })
+    ).rejects.toThrow();
+    await expect(
+      changeOrderType(db, s.id, "customer", { buyer_wechat: "wx", sell_price_cny: null as unknown as number })
+    ).rejects.toThrow();
+  });
+
+  it("customer→stock：清买家/卖出/快递单号/发货时间戳，状态 in_stock", async () => {
+    const o = await createOrder(db, { ...baseCustomer, buy_price_cny: 5000 });
+    await changeStatus(db, o.id, "shipped");
+    await updateOrder(db, o.id, { tracking_no: "SF123" });
+    const done = await changeStatus(db, o.id, "done");
+
+    const s = await changeOrderType(db, done.id, "stock", {});
+    expect(s.order_type).toBe("stock");
+    expect(s.status).toBe("in_stock");
+    expect(s.buyer_wechat).toBeNull();
+    expect(s.buyer_alias).toBeNull();
+    expect(s.region).toBeNull();
+    expect(s.sell_price_cny).toBeNull();
+    expect(s.shipped_at).toBeNull();
+    expect(s.tracking_no).toBeNull();
+    expect(s.closed_at).toBeNull();
+    expect(s.converted_from_stock_at).toBeNull();
+    expect(s.buy_price_cny).toBe(5000);
+  });
+
+  it("customer→stock 缺买入价拒绝", async () => {
+    const o = await createOrder(db, baseCustomer); // 无 buy_price
+    await expect(changeOrderType(db, o.id, "stock", {})).rejects.toThrow(/买入价/);
+  });
+
+  it("settlement_updated_at 每次类型切换刷新", async () => {
+    const s = await createOrder(db, stockInput);
+    await new Promise((r) => setTimeout(r, 5));
+    const c = await changeOrderType(db, s.id, "customer", {
+      buyer_wechat: "wx",
+      sell_price_cny: 3000,
+    });
+    expect(c.settlement_updated_at).not.toBeNull();
+  });
+
+  it("batch 成员双向转换仍在团内（成员不变量重新断言）", async () => {
+    const b = await createBatch(db, { name: "202608-JAYD 一团", site_id: 1, currency: "AUD" });
+    const s = await createOrder(db, {
+      ...stockInput,
+      batch_id: b.id,
+      cost_foreign_amount: 5000,
+      cost_currency: "AUD",
+    });
+    const c = await changeOrderType(db, s.id, "customer", {
+      buyer_wechat: "wx",
+      sell_price_cny: 3000,
+    });
+    expect(c.batch_id).toBe(b.id);
+
+    const back = await changeOrderType(db, c.id, "stock", {});
+    expect(back.batch_id).toBe(b.id);
+    expect(back.buy_price_cny).toBe(2000);
+  });
+
+  it("纯人民币囤货转代购时不能入团", async () => {
+    const b = await createBatch(db, { name: "团", site_id: 1, currency: "AUD" });
+    const s = await createOrder(db, stockInput); // 无外币成本
+    await expect(
+      changeOrderType(db, s.id, "customer", {
+        buyer_wechat: "wx",
+        sell_price_cny: 3000,
+        batch_id: b.id,
+      })
+    ).rejects.toThrow(/外币/);
   });
 });

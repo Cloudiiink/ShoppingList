@@ -10,7 +10,8 @@ const selectMock = vi.fn();
 const closeMock = vi.fn();
 
 vi.mock("@tauri-apps/api/path", () => ({
-  appConfigDir: async () => "/mock/config/",
+  appConfigDir: async () => "/mock/config",
+  join: async (...parts: string[]) => parts.join("/"),
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
@@ -35,7 +36,7 @@ const fakeDb: SqlDb = {
   execute: async (sql: string) => {
     vacuumSql.push(sql);
     const m = /^VACUUM INTO '(.*)'$/.exec(sql);
-    if (m) dirFiles.push(m[1]!.replace("/mock/config/", ""));
+    if (m) dirFiles.push(m[1]!.replace(/^\/mock\/config\/?/, ""));
     return { rowsAffected: 0, lastInsertId: 0 } as never;
   },
   select: async () => [] as never,

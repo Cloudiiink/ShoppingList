@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { InventoryPage } from "./InventoryPage";
 import { createOrder, getOrder } from "@/db/orders";
 import { listSites } from "@/db/sites";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
+import { renderWithConfirm } from "@/test/render";
 import type { SiteRow, SqlDb } from "@/db/types";
 
 let db: SqlDb;
@@ -36,7 +37,7 @@ describe("InventoryPage", () => {
       buy_price_cny: 2000,
       shipping_fee: 500,
     });
-    render(<InventoryPage db={db} sites={sites} />);
+    renderWithConfirm(<InventoryPage db={db} sites={sites} />);
 
     expect(await screen.findByText("囤货商品")).toBeInTheDocument();
     expect(screen.getByText("在库")).toBeInTheDocument();
@@ -45,15 +46,20 @@ describe("InventoryPage", () => {
     expect(screen.getAllByText("25.00").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("转售出核心流：填买家+卖出价 → order_type=customer、状态待发货、conversion 时间戳写入", async () => {
+  it("转售出核心流：预置代购、成本/下单时间锁定 → 填买家+卖出价保存 → 转 customer 待发货", async () => {
     const stock = await seedStock();
     const user = userEvent.setup();
-    render(<InventoryPage db={db} sites={sites} />);
+    renderWithConfirm(<InventoryPage db={db} sites={sites} />);
 
     await user.click(await screen.findByRole("button", { name: "转售出" }));
+    // 快捷入口预置代购：类型与成本/下单时间锁定
+    expect((field("类型") as HTMLSelectElement).disabled).toBe(true);
+    expect((field("下单时间 *") as HTMLInputElement).disabled).toBe(true);
+    expect((field(/买入价/) as HTMLInputElement).disabled).toBe(true);
+
     await user.type(field("买家微信 *"), "wx-conv");
     await user.type(field("卖出价（元）*"), "300");
-    await user.click(screen.getByRole("button", { name: "确认转售出" }));
+    await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(async () => {
       const o = await getOrder(db, stock.id);
@@ -69,7 +75,7 @@ describe("InventoryPage", () => {
   it("挂单流转：在库 → 挂单中", async () => {
     const stock = await seedStock();
     const user = userEvent.setup();
-    render(<InventoryPage db={db} sites={sites} />);
+    renderWithConfirm(<InventoryPage db={db} sites={sites} />);
 
     await user.click(await screen.findByRole("button", { name: "挂单" }));
 
@@ -80,7 +86,7 @@ describe("InventoryPage", () => {
   it("一键复制：默认 1 份 → 列表多一条同商品在库单", async () => {
     await seedStock();
     const user = userEvent.setup();
-    render(<InventoryPage db={db} sites={sites} />);
+    renderWithConfirm(<InventoryPage db={db} sites={sites} />);
 
     await user.click(await screen.findByRole("button", { name: "复制" }));
     expect(await screen.findByText(/复制订单/)).toBeInTheDocument();

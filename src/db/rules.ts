@@ -162,6 +162,12 @@ export function fullCost(order: OrderRow): number {
 // 状态转移矩阵（§4.2，唯一实现）
 // ---------------------------------------------------------------------------
 
+/** 各类型初始状态（createOrder / changeOrderType / 表单状态下拉共用） */
+export const INITIAL_STATUS: Record<OrderType, OrderStatus> = {
+  customer: "paid_pending_ship",
+  stock: "in_stock",
+};
+
 const TRANSITIONS: Record<OrderType, Record<string, OrderStatus[]>> = {
   customer: {
     paid_pending_ship: ["shipped", "refunded", "lost"],

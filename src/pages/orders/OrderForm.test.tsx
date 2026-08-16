@@ -1,14 +1,15 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { OrderForm } from "./OrderForm";
-import { createOrder, listOrders } from "@/db/orders";
+import { createOrder, getOrder, listOrders } from "@/db/orders";
 import { listSites } from "@/db/sites";
 import { upsertRate } from "@/db/rates";
 import { fetchRate } from "@/lib/rates";
 import { freshDb, seedSites } from "@/db/testUtils";
 import { field } from "@/test/domUtils";
+import { renderWithConfirm } from "@/test/render";
 import type { SiteRow, SqlDb } from "@/db/types";
 
 let db: SqlDb;
@@ -20,14 +21,19 @@ beforeEach(async () => {
   sites = await listSites(db);
 });
 
-function renderForm(onClose = vi.fn(), order: Parameters<typeof OrderForm>[0]["order"] = null) {
-  render(
+function renderForm(
+  onClose = vi.fn(),
+  order: Parameters<typeof OrderForm>[0]["order"] = null,
+  convertShortcut = false
+) {
+  renderWithConfirm(
     <OrderForm
       db={db}
       sites={sites}
       batches={[]}
       adjustmentGroups={[]}
       order={order}
+      convertShortcut={convertShortcut}
       open={true}
       onClose={onClose}
     />
@@ -230,5 +236,132 @@ describe("OrderForm", () => {
     expect((field("折扣率（空 = 无折扣）") as HTMLInputElement).value).toBe("0.88");
     expect((field(/外币原价/) as HTMLInputElement).value).toBe("100.00");
     expect(await screen.findByText("88.00 AUD")).toBeInTheDocument();
+  });
+
+  it("编辑囤货单切代购：确认后转 customer 待发货、converted_from_stock_at 写入", async () => {
+    const created = await createOrder(db, {
+      order_type: "stock",
+      product_name: "囤货转代购",
+      site_id: sites[0]!.id,
+      buy_price_cny: 2000,
+    });
+    const user = userEvent.setup();
+    const onClose = renderForm(vi.fn(), created);
+
+    await user.selectOptions(field("类型"), "customer");
+    expect(await screen.findByText("切换为代购单？")).toBeInTheDocument();
+    // 确认前类型尚未真正切换（受控值回弹，取消即保持）
+    expect((field("类型") as HTMLSelectElement).value).toBe("stock");
+
+    await user.click(screen.getByRole("button", { name: "切换" }));
+    await user.type(field("买家微信 *"), "wx-conv");
+    await user.type(field("卖出价（元）*"), "300");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+    const o = await getOrder(db, created.id);
+    expect(o.order_type).toBe("customer");
+    expect(o.status).toBe("paid_pending_ship");
+    expect(o.buyer_wechat).toBe("wx-conv");
+    expect(o.sell_price_cny).toBe(30000);
+    expect(o.converted_from_stock_at).not.toBeNull();
+    expect(o.buy_price_cny).toBe(2000); // 成本锁定
+  });
+
+  it("编辑代购单切囤货：确认清空买家/卖出，保存转 stock in_stock", async () => {
+    const created = await createOrder(db, {
+      order_type: "customer",
+      product_name: "代购转囤",
+      site_id: sites[0]!.id,
+      buyer_wechat: "wx-old",
+      sell_price_cny: 8000,
+      buy_price_cny: 5000,
+    });
+    const user = userEvent.setup();
+    const onClose = renderForm(vi.fn(), created);
+
+    await user.selectOptions(field("类型"), "stock");
+    expect(await screen.findByText("切换为囤货单？")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "切换" }));
+
+    // 买家/卖出被清空并禁用
+    expect((field("买家微信") as HTMLInputElement).disabled).toBe(true);
+    expect((field("卖出价（元）") as HTMLInputElement).disabled).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+
+    const o = await getOrder(db, created.id);
+    expect(o.order_type).toBe("stock");
+    expect(o.status).toBe("in_stock");
+    expect(o.buyer_wechat).toBeNull();
+    expect(o.buyer_alias).toBeNull();
+    expect(o.region).toBeNull();
+    expect(o.sell_price_cny).toBeNull();
+    expect(o.buy_price_cny).toBe(5000);
+  });
+
+  it("编辑代购单切囤货缺买入价：保存报错不落库", async () => {
+    const created = await createOrder(db, {
+      order_type: "customer",
+      product_name: "无成本代购",
+      site_id: sites[0]!.id,
+      buyer_wechat: "wx-old",
+      sell_price_cny: 8000,
+    });
+    const user = userEvent.setup();
+    const onClose = renderForm(vi.fn(), created);
+
+    await user.selectOptions(field("类型"), "stock");
+    await user.click(await screen.findByRole("button", { name: "切换" }));
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    expect(await screen.findByText("囤货单必须填写买入价")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("转售出快捷入口：预置代购、成本块与下单时间锁定", async () => {
+    const created = await createOrder(db, {
+      order_type: "stock",
+      product_name: "囤货转售",
+      site_id: sites[0]!.id,
+      buy_price_cny: 2000,
+    });
+    renderForm(vi.fn(), created, true);
+
+    expect((field("类型") as HTMLSelectElement).disabled).toBe(true);
+    expect((field("下单时间 *") as HTMLInputElement).disabled).toBe(true);
+    expect((field(/买入价/) as HTMLInputElement).disabled).toBe(true);
+    expect((field(/外币原价/) as HTMLInputElement).disabled).toBe(true);
+    // 买家/卖出可编辑（预置代购）
+    expect((field("买家微信 *") as HTMLInputElement).disabled).toBe(false);
+    expect((field("卖出价（元）*") as HTMLInputElement).disabled).toBe(false);
+  });
+
+  it("新建表单切换类型：无确认框，买家/卖出随类型清空禁用", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.selectOptions(field("类型"), "stock");
+    expect(screen.queryByText("切换为囤货单？")).toBeNull();
+    expect((field("买家微信") as HTMLInputElement).disabled).toBe(true);
+    expect((field("卖出价（元）") as HTMLInputElement).disabled).toBe(true);
+  });
+
+  it("编辑订单：状态显示与状态下拉为中文（不泄漏英文枚举）", async () => {
+    const created = await createOrder(db, {
+      order_type: "stock",
+      product_name: "囤货",
+      site_id: sites[0]!.id,
+      buy_price_cny: 2000,
+    });
+    renderForm(vi.fn(), created);
+
+    // 当前状态显示中文「在库」而非 in_stock
+    expect(await screen.findByText(/变更状态（当前 在库）/)).toBeInTheDocument();
+    // 下拉选项为中文动作，而非 listed/consumed/lost
+    expect(screen.getByRole("option", { name: "挂单" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "自用" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "丢失" })).toBeInTheDocument();
   });
 });

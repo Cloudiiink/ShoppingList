@@ -7,6 +7,7 @@ import { InventoryPage } from "@/pages/inventory/InventoryPage";
 import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { StatsPage } from "@/pages/stats/StatsPage";
 import { newestBackupAgeDays } from "@/lib/backupFiles";
+import { importDatabase, cleanPreviewFile, type ImportMode } from "@/lib/importDb";
 import { ConfirmDialogProvider } from "@/components/ConfirmDialog";
 import { HelpIconsProvider } from "@/lib/helpIcons";
 import { cn } from "@/lib/utils";
@@ -39,6 +40,8 @@ export default function App() {
         const db = await initDb();
         const sites = await listSites(db);
         setState({ kind: "ready", db, sites });
+        // 清理上次「临时加载」残留的 preview 文件（非阻塞，fs 不可用静默跳过）
+        await cleanPreviewFile().catch(() => {});
         // 7 天未备份 → 非阻塞提示（fs 不可用的环境静默跳过）
         try {
           const age = await newestBackupAgeDays();
@@ -57,6 +60,16 @@ export default function App() {
   const onSitesChanged = useCallback((sites: SiteRow[]) => {
     setState((s) => (s.kind === "ready" ? { ...s, sites } : s));
   }, []);
+
+  const switchDatabase = useCallback(
+    async (file: File, mode: ImportMode) => {
+      if (state.kind !== "ready") return;
+      const newDb = await importDatabase(file, mode, state.db);
+      const newSites = await listSites(newDb);
+      setState({ kind: "ready", db: newDb, sites: newSites });
+    },
+    [state]
+  );
 
   if (state.kind === "booting") {
     return (
@@ -110,7 +123,7 @@ export default function App() {
             ) : page === "库存" ? (
               <InventoryPage db={state.db} sites={state.sites} />
             ) : page === "设置" ? (
-              <SettingsPage db={state.db} onSitesChanged={onSitesChanged} />
+              <SettingsPage db={state.db} onSitesChanged={onSitesChanged} onSwitchDatabase={switchDatabase} />
             ) : page === "统计" ? (
               <StatsPage db={state.db} />
             ) : (

@@ -10,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { copyOrders, MAX_COPY_COUNT } from "@/db/orders";
+import { ORDER_TYPE_LABEL } from "@/lib/labels";
 import type { OrderRow, SqlDb } from "@/db/types";
 
 /**
@@ -58,7 +59,7 @@ export function CopyOrderDialog({
         </DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            将创建 N 条全量副本（保留类型：{order.order_type === "customer" ? "代购" : "囤货"}，各自新订单号）。
+            将创建 N 条全量副本（保留类型：{ORDER_TYPE_LABEL[order.order_type]}，各自新订单号）。
           </p>
           <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
             <li>保留：类型、商品、网站、买家、卖出价、运费、快递单号、外币/折扣/汇率、调整、备注</li>

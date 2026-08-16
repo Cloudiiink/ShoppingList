@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { appConfigDir } from "@tauri-apps/api/path";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
+import { appConfigDir, join } from "@tauri-apps/api/path";
 import { writeTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +11,18 @@ import { listRates, upsertRate, type RateRow } from "@/db/rates";
 import { refreshAllRates } from "@/lib/rates";
 import { ordersToCsv } from "@/db/export";
 import { doBackup, listBackups } from "@/lib/backupFiles";
+import type { ImportMode } from "@/lib/importDb";
 import { isoToLocalDateTime } from "@/lib/time";
 import { CURRENCIES, type Currency, type SiteRow, type SqlDb } from "@/db/types";
 import { useHelpIcons } from "@/lib/helpIcons";
 import { HelpIcon } from "@/components/HelpIcon";
+import { useConfirm } from "@/components/ConfirmDialog";
 
-export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged: (sites: SiteRow[]) => void }) {
+export function SettingsPage({ db, onSitesChanged, onSwitchDatabase }: {
+  db: SqlDb;
+  onSitesChanged: (sites: SiteRow[]) => void;
+  onSwitchDatabase: (file: File, mode: ImportMode) => Promise<void>;
+}) {
   const [sites, setSites] = useState<SiteRow[]>([]);
   const [refCounts, setRefCounts] = useState<Record<number, number>>({});
   const [newName, setNewName] = useState("");
@@ -31,7 +37,10 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
   const [rates, setRates] = useState<RateRow[]>([]);
   const [rateDrafts, setRateDrafts] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [importMode, setImportMode] = useState<ImportMode>("replace");
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { showHelp, setShowHelp } = useHelpIcons();
+  const confirm = useConfirm();
 
   const reload = useCallback(async () => {
     const ss = await listSites(db);
@@ -41,7 +50,7 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
     for (const s of ss) counts[s.id] = await siteRefCount(db, s.id);
     setRefCounts(counts);
     setBackups(await listBackups());
-    setDbPath(`${await appConfigDir()}tracker.db`);
+    setDbPath(await join(await appConfigDir(), "tracker.db"));
     const rs = await listRates(db);
     setRates(rs);
     setRateDrafts(Object.fromEntries(rs.map((r) => [r.currency, String(r.rate)])));
@@ -84,7 +93,7 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
       const csv = ordersToCsv(orders, new Map(batches.map((b) => [b.id, b.name])));
       const name = `orders-export-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.csv`;
       await writeTextFile(name, "﻿" + csv, { baseDir: BaseDirectory.AppConfig });
-      setMessage(`已导出 ${orders.length} 条订单：${await appConfigDir()}${name}`);
+      setMessage(`已导出 ${orders.length} 条订单：${await join(await appConfigDir(), name)}`);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -116,6 +125,36 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
       await reload();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setRefreshing(false); }
+  }
+
+  function pickFile(mode: ImportMode) {
+    setImportMode(mode);
+    fileInputRef.current?.click();
+  }
+
+  async function onReplaceClick() {
+    if (!(await confirm({
+      title: "替换当前数据库？",
+      body: "将先自动备份当前数据，再用所选 .db 覆盖并重新加载（下次启动继续用）。此操作不可撤销，请确认已备份重要数据。",
+      confirmText: "选择文件并替换",
+      danger: true,
+    }))) return;
+    pickFile("replace");
+  }
+
+  async function onFileChosen(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // 允许再次选择同一文件
+    if (!file) return;
+    setError(""); setMessage("");
+    try {
+      await onSwitchDatabase(file, importMode);
+      setMessage(importMode === "replace"
+        ? "数据库已替换并重新加载"
+        : "已临时加载数据库（重启后恢复默认）");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   return (
@@ -242,8 +281,18 @@ export function SettingsPage({ db, onSitesChanged }: { db: SqlDb; onSitesChanged
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">数据库位置</h2>
+        <h2 className="text-lg font-semibold">数据库<HelpIcon text="导入备份或从另一台电脑迁移数据：选一个 .db 文件。替换＝覆盖当前数据（自动先备份）；临时加载＝只本次使用，重启恢复默认。" className="ml-1" /></h2>
         <p className="font-mono text-sm text-muted-foreground">{dbPath}</p>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onReplaceClick}>导入数据库（替换）</Button>
+          <Button variant="outline" onClick={() => pickFile("preview")}>临时加载数据库…</Button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          onChange={onFileChosen}
+        />
       </section>
     </div>
   );

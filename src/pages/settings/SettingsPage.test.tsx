@@ -16,7 +16,8 @@ const doBackupMock = vi.fn();
 const listBackupsMock = vi.fn();
 
 vi.mock("@tauri-apps/api/path", () => ({
-  appConfigDir: async () => "/mock/config/",
+  appConfigDir: async () => "/mock/config",
+  join: async (...parts: string[]) => parts.join("/"),
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
@@ -40,7 +41,9 @@ beforeEach(async () => {
 });
 
 function renderPage() {
-  return render(<SettingsPage db={db} onSitesChanged={vi.fn()} />);
+  return render(
+    <SettingsPage db={db} onSitesChanged={vi.fn()} onSwitchDatabase={vi.fn()} />
+  );
 }
 
 describe("SettingsPage", () => {

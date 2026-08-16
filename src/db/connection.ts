@@ -29,12 +29,13 @@ let serialized: SerializedDb | null = null;
 let raw: Database | null = null;
 
 const MAX_ATTEMPTS = 5;
-const DB_KEY = "sqlite:tracker.db";
+/** 当前连接的 key（initDb 默认 tracker.db；switchDb 后指向所选库），recoverPool 据此重载当前库 */
+let currentKey = "sqlite:tracker.db";
 
 /** 关池重建：释放池连接持有的一切锁/悬挂事务，并切换串行化外壳的 inner */
 async function recoverPool(): Promise<void> {
-  if (raw) await raw.close(DB_KEY).catch(() => {});
-  raw = await Database.load(DB_KEY);
+  if (raw) await raw.close(raw.path).catch(() => {});
+  raw = await Database.load(currentKey);
   serialized?.swapInner(raw);
 }
 
@@ -44,7 +45,7 @@ export async function initDb(): Promise<SqlDb> {
   if (db) return db;
 
   // Step 2: load（每次重试换全新池，见 recoverPool）
-  raw = await Database.load(DB_KEY);
+  raw = await Database.load(currentKey);
 
   let lastErr: unknown = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -75,12 +76,43 @@ export async function initDb(): Promise<SqlDb> {
       lastErr = e;
       // 关键恢复手段：关闭当前池（释放其连接持有的全部锁/悬挂事务），
       // 下次尝试用全新池的全新连接。锁源无论挂在池内哪条连接上都能自愈。
-      await raw.close(DB_KEY).catch(() => {});
+      await raw.close(raw.path).catch(() => {});
       if (attempt < MAX_ATTEMPTS) {
         await sleep(1000);
-        raw = await Database.load(DB_KEY);
+        raw = await Database.load(currentKey);
       }
     }
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/**
+ * 切换数据源（导入/临时加载数据库）：加载新库并跑完启动序列，
+ * 全部成功后才替换当前连接；失败则关新池、旧连接保持可用。
+ */
+export async function switchDb(absPath: string): Promise<SqlDb> {
+  const key = `sqlite:${absPath}`;
+  const nextRaw = await Database.load(key);
+  const next = serialize(nextRaw);
+  try {
+    await next.execute("ROLLBACK").catch(() => {});
+    await next.execute("PRAGMA foreign_keys = ON");
+    const rows = await next.select<{ foreign_keys: number }[]>(
+      "PRAGMA foreign_keys"
+    );
+    if (rows[0]?.foreign_keys !== 1) {
+      throw new Error("PRAGMA foreign_keys = ON 未生效");
+    }
+    await migrate(next);
+  } catch (e) {
+    await nextRaw.close(key).catch(() => {});
+    throw e;
+  }
+
+  if (raw) await raw.close(raw.path).catch(() => {});
+  raw = nextRaw;
+  serialized = next;
+  db = next;
+  currentKey = key;
+  return next;
 }

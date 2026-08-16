@@ -6,7 +6,9 @@ import type {
   SqlDb,
 } from "./types";
 import {
+  canConvertStock,
   canTransition,
+  INITIAL_STATUS,
   legalTargets,
   normRate,
   nowUtc,
@@ -108,8 +110,7 @@ export async function createOrder(
 ): Promise<OrderRow> {
   validate(input);
   const now = nowUtc();
-  const status: OrderStatus =
-    input.order_type === "customer" ? "paid_pending_ship" : "in_stock";
+  const status: OrderStatus = INITIAL_STATUS[input.order_type];
 
   // 入团校验只读，无需纳入事务
   if (input.batch_id != null) {
@@ -282,13 +283,9 @@ export async function listOrders(
   return db.select<OrderRow[]>(sql, params);
 }
 
-export async function updateOrder(
-  db: SqlDb,
-  id: number,
-  patch: Partial<OrderInput>
-): Promise<OrderRow> {
-  const existing = await getOrder(db, id);
-  const merged: OrderInput = {
+/** OrderRow → OrderInput（updateOrder / changeOrderType 共用，把库行展开为全字段输入） */
+function existingToInput(existing: OrderRow): OrderInput {
+  return {
     order_type: existing.order_type,
     product_name: existing.product_name,
     site_id: existing.site_id,
@@ -311,8 +308,16 @@ export async function updateOrder(
     shipping_fee: existing.shipping_fee,
     adjustments: parseAdjustments(existing.adjustments),
     note: existing.note,
-    ...patch,
   };
+}
+
+export async function updateOrder(
+  db: SqlDb,
+  id: number,
+  patch: Partial<OrderInput>
+): Promise<OrderRow> {
+  const existing = await getOrder(db, id);
+  const merged: OrderInput = { ...existingToInput(existing), ...patch };
   validate(merged);
 
   // 成员不变量：只要编辑后仍在团内就必须持续成立（改 site/币种/清空外币也受约束）
@@ -387,6 +392,88 @@ export async function changeStatus(
   const now = nowUtc();
   const patch = statusChangePatch(order, to, now);
   await runUpdate(db, id, [...Object.entries(patch), ["updated_at", now]]);
+  return getOrder(db, id);
+}
+
+/**
+ * 切换订单类型（双向，单 UPDATE 原子）。
+ * 表单编辑切类型、库存页「转售出」统一入口（取代单向 convertStockToCustomer）。
+ * 语义：清空被切走一侧的专属字段 + 状态重置为目标类型初始态。
+ * - stock→customer：需买家微信+卖出价（validate 闸），写 converted_from_stock_at；
+ *   成本/购买日/买入价锁定不变。
+ * - customer→stock：清买家/卖出价/快递单号/发货时间戳，需买入价（validate 闸）。
+ * - 目标恒为初始态（非终态、未发货），故 shipped_at / closed_at 一律清空。
+ */
+export async function changeOrderType(
+  db: SqlDb,
+  id: number,
+  targetType: OrderType,
+  patch: Partial<OrderInput>
+): Promise<OrderRow> {
+  const existing = await getOrder(db, id);
+  if (existing.order_type === targetType) {
+    throw new Error("订单已是该类型，无需切换");
+  }
+  // 方向来源守卫：lost 囤货不能直接转代购（先按矩阵回退在库）
+  if (targetType === "customer" && !canConvertStock(existing.status)) {
+    throw new Error("lost 状态的囤货不能直接转代购，请先回退到在库");
+  }
+
+  const merged: OrderInput = {
+    ...existingToInput(existing),
+    ...patch,
+    order_type: targetType,
+  };
+  // 防御性清空：切到囤货时买家/卖出字段必须为空（防止表单残留值漏入 stock 行）
+  if (targetType === "stock") {
+    merged.buyer_wechat = null;
+    merged.buyer_alias = null;
+    merged.region = null;
+    merged.sell_price_cny = null;
+  }
+  validate(merged);
+
+  // 入团校验（只读，无需纳入事务；成本字段不变，batch_id 原样保留）
+  if (merged.batch_id != null) {
+    await assertBatchMembership(db, merged.batch_id, {
+      site_id: merged.site_id,
+      cost_foreign_amount: merged.cost_foreign_amount ?? null,
+      cost_currency: merged.cost_currency ?? null,
+    });
+  }
+
+  const now = nowUtc();
+  const fields: [string, unknown][] = [
+    ["order_type", targetType],
+    ["status", INITIAL_STATUS[targetType]],
+    ["batch_id", merged.batch_id ?? null],
+    ["buyer_wechat", merged.buyer_wechat ?? null],
+    ["buyer_alias", merged.buyer_alias ?? null],
+    ["region", merged.region ?? null],
+    ["product_name", merged.product_name],
+    ["product_note", merged.product_note ?? null],
+    ["site_id", merged.site_id],
+    ["reserved_at", merged.reserved_at ?? null],
+    ["ordered_at", merged.ordered_at ?? existing.ordered_at],
+    ["tracking_no", targetType === "stock" ? null : (merged.tracking_no ?? null)],
+    ["cost_foreign_amount", merged.cost_foreign_amount ?? null],
+    ["cost_currency", merged.cost_currency ?? null],
+    ["discount_rate", merged.discount_rate ?? null],
+    ["original_foreign_amount", merged.original_foreign_amount ?? null],
+    ["exchange_rate", merged.exchange_rate != null ? normRate(merged.exchange_rate) : null],
+    ["buy_price_cny", merged.buy_price_cny ?? null],
+    ["buy_price_source", merged.buy_price_source ?? "estimated"],
+    ["sell_price_cny", merged.sell_price_cny ?? null],
+    ["shipping_fee", merged.shipping_fee ?? null],
+    ["adjustments", JSON.stringify(merged.adjustments ?? [])],
+    ["note", merged.note ?? null],
+    ["shipped_at", null],
+    ["closed_at", null],
+    ["converted_from_stock_at", targetType === "customer" ? now : null],
+    ["settlement_updated_at", now],
+    ["updated_at", now],
+  ];
+  await runUpdate(db, id, fields);
   return getOrder(db, id);
 }
 

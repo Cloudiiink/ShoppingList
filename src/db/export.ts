@@ -1,7 +1,7 @@
 import type { OrderRow } from "./types";
 import { fenToYuan } from "./rules";
 import { isoToLocalDate } from "@/lib/time";
-import { SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
+import { ORDER_TYPE_LABEL, SOURCE_LABEL, STATUS_LABEL } from "@/lib/labels";
 
 /** CSV 导出（§6.5）：订单全字段 + batch_name，金额导出为「元」两位小数 */
 
@@ -32,7 +32,7 @@ export function ordersToCsv(
     [
       String(o.id),
       o.order_no,
-      o.order_type === "customer" ? "代购" : "囤货",
+      ORDER_TYPE_LABEL[o.order_type],
       STATUS_LABEL[o.status],
       o.batch_id != null ? (batchNames.get(o.batch_id) ?? "") : "",
       o.buyer_wechat ?? "",
